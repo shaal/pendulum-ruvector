@@ -24,6 +24,9 @@ ruvector-core = { path = "../RuVector/crates/ruvector-core", default-features = 
 # `gnn`: message-pass over the link/joint graph with a real RuVector GNN layer.
 ruvector-gnn = { path = "../RuVector/crates/ruvector-gnn", optional = true }
 serde_json = { version = "1", optional = true }
+# Interactive "you vs RuVector" game (the `play` binary). Optional: it pulls a
+# graphics stack, so it's only built when the `game` feature is on.
+macroquad = { version = "0.4", optional = true }
 
 [features]
 default = []
@@ -31,6 +34,13 @@ vectordb = ["dep:ruvector-core", "dep:serde_json"]
 gnn = ["dep:ruvector-gnn"]
 # Convenience: enable the whole unified loop.
 ruvector = ["vectordb", "gnn"]
+# Interactive keyboard game.
+game = ["dep:macroquad"]
+
+[[bin]]
+name = "play"
+path = "src/bin/play.rs"
+required-features = ["game"]
 
 [profile.release]
 opt-level = 2

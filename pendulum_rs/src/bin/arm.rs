@@ -24,6 +24,7 @@ struct Args {
     out: String,
     csv: Option<String>,
     new_len: f64, // link-2 length after the change
+    spawn: bool,  // stream into a live Rerun window instead of saving .rrd
 }
 
 fn parse_args() -> Args {
@@ -32,6 +33,7 @@ fn parse_args() -> Args {
         out: "arm.rrd".to_string(),
         csv: None,
         new_len: 2.0,
+        spawn: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(f) = it.next() {
@@ -40,6 +42,7 @@ fn parse_args() -> Args {
             "--out" => a.out = it.next().unwrap(),
             "--csv" => a.csv = Some(it.next().unwrap()),
             "--newlen" => a.new_len = it.next().unwrap().parse().unwrap(),
+            "--spawn" => a.spawn = true,
             other => eprintln!("(ignoring {other})"),
         }
     }
@@ -72,7 +75,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut k_naive = k0;
     let mut k_adaptive = k0;
 
-    let rec = rerun::RecordingStreamBuilder::new("arm_balance").save(&args.out)?;
+    let builder = rerun::RecordingStreamBuilder::new("arm_balance");
+    let rec = if args.spawn {
+        builder.spawn()?
+    } else {
+        builder.save(&args.out)?
+    };
     let mut csv = args
         .csv
         .as_ref()

@@ -18,6 +18,20 @@ Stack (matches the standard Rust robotics recommendation): custom dynamics +
 DB) and `ruvector-gnn` (graph attention layer) linked as path dependencies into
 the `../RuVector` submodule.
 
+## Play it: You vs RuVector (`play` binary)
+
+An interactive duel. You drive the left arm's base motor with **A / D** and try to
+keep it balanced straight up; the right arm balances itself (and recalibrates on
+disturbance). Press **SPACE** to fire a disturbance, **R** to reset.
+
+```bash
+cargo run --release --features game --bin play
+```
+
+Balancing an underactuated double pendulum through one joint by hand is *brutal*
+— that's the point. (Uses [macroquad](https://macroquad.rs) for the live window;
+only built with `--features game`.)
+
 ## Underactuated arm balance (`arm` binary) — the main demo
 
 A 2-link arm with **only joint 0 motorized** balances straight up (an unstable
