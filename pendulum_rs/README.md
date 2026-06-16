@@ -137,6 +137,32 @@ message-pass contextualizes the neighbourhood, the graph weights do the
 interpolating. For a between-seed arm the blend lands measurably closer to the
 true gain than any single neighbour (test: `gnn_interpolation_beats_snapping`).
 
+## Stage 1: evolutionary swing-up — *discover* a better controller (`evolve` binary)
+
+So far the arm *adapts* (recall a known controller). Here it *discovers* one. A
+population of hundreds of candidate swing-up policies competes each generation;
+a gradient-free **cross-entropy search** marches the distribution toward policies
+that recover more knockdowns. The LQR catch stays untouched (hybrid) — only the
+swing-up `v` (the commanded actuated acceleration the PFL inversion realizes) is
+learned, as a linear combination of physical features (`learn::EnergyShapingPolicy`).
+
+```bash
+cargo run --release --bin evolve     # ~10s on a multicore box; no GPU, no ML deps
+```
+
+The hand-tuned baseline recovers **7/10**; the evolved champion (default seed)
+recovers **10/10**, using features the hand-tuning never touched (passive-joint
+pump, posture-sin term, velocity damping). It's honest generalization — trained
+on randomized knockdowns, judged on the held-out `check` harness.
+
+**Honest note:** the search is stochastic on a chaotic landscape, but reliably
+strong — seeds 0–7 recover **7–10/10 (median ~9.5), and 7 of 8 beat the 7/10
+baseline** (an outlier seed gave 6). A given seed reproduces exactly (the RNG is
+seeded). Implementation is a few hundred lines of dependency-light Rust
+(`std::thread::scope` for the parallel population, a splitmix64 RNG). Test
+`evolved_champion_beats_baseline` pins the champion. Design + roadmap:
+[`../docs/plans/`](../docs/plans/).
+
 ## Build & run (the logging/visualization demo)
 
 The base build is self-contained (just the Rerun SDK):

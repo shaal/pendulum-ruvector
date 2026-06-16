@@ -29,11 +29,12 @@ not yet **discover** (find controllers nobody designed) or **learn from reward**
 
 ## Stages
 
-### Stage 1 — Evolutionary swing-up search *(next; see `evolutionary-swingup.md`)*
-Population of candidate swing-up policies, gradient-free ES, domain-randomized
-arms, scored on the harness; winners stored in RuVector as retrievable skills.
-The jump from adaptation to discovery. **Target: beat 7/10 + show a learning
-curve.** Use ship-task.
+### Stage 1 — Evolutionary swing-up search *(core ✅ shipped; see `evolutionary-swingup.md`)*
+Population of candidate swing-up policies, gradient-free CEM, scored on the
+harness; the jump from adaptation to discovery. **Done:** `learn.rs` policy/
+fitness + `evolve` binary; champion beats baseline (7/10 → 10/10 default seed,
+6–10 across seeds). **Remaining:** store winners in RuVector, domain
+randomization (→ Stage 2), game payoff. Use ship-task.
 
 ### Stage 2 — Generalization via domain randomization
 Evolve a *single* policy over randomized arm configs so it recovers across arms
