@@ -153,4 +153,22 @@ fn main() {
         eprintln!("\n→ no improvement over baseline this run (try a different SEED or more generations).");
     }
     eprintln!("(CEM is stochastic but reliable: seeds 0–7 → 7–10/10, 7 of 8 beat the 7/10 baseline.)");
+
+    // With RuVector: store the champion keyed by the config it trained on (the
+    // nominal arm), so the controller can later *recall* this learned swing-up.
+    #[cfg(feature = "vectordb")]
+    {
+        use pendulum_rs::memory::ConfigMemory;
+        let mut mem = ConfigMemory::new("evolve_policies.db").expect("open RuVector store");
+        mem.seed_grid().expect("seed grid (for whitening)"); // sets the shared whitening
+        let sig = mem.config_signature(1.0, 1.0, 0.05);
+        let id = mem.insert_policy(&sig, &champion, 1.0, 1.0, 0.05).expect("store policy");
+        // Confirm it round-trips back out of RuVector.
+        let recalled = mem.recall_policy(&sig).expect("recall").expect("a stored policy");
+        eprintln!(
+            "\nStored champion in RuVector as {id} (keyed by the nominal config signature).\n  recall round-trip: {} params, dist {:.4}",
+            recalled.params.len(),
+            recalled.score
+        );
+    }
 }
