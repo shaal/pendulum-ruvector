@@ -234,6 +234,16 @@ sharing is the only difference). **RuVector-mediated sharing reaches
 population-wide competence in up to 80% fewer total rollouts** (and the harder
 the target, the bigger the gap). Test: `ruvector_sharing_accelerates_the_population`.
 
+**Watch it live (`popviz`).**
+```bash
+cargo run --release --features "game vectordb" --bin popviz
+```
+One live arm per island, each driven in real time by its island's *current*
+champion, while a background thread evolves the population. Press **S** to toggle
+sharing — with it on, a stuck island's arm visibly inherits the global-best
+policy the moment a migration fires; **R** restarts. The global best is outlined
+in gold; arms are coloured by fitness.
+
 ## Build & run (the logging/visualization demo)
 
 The base build is self-contained (just the Rerun SDK):

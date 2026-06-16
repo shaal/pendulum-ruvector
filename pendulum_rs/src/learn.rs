@@ -177,6 +177,25 @@ pub fn rollout_config<P: SwingUpPolicy>(
     }
 }
 
+/// Per-step recovery torque toward upright using a *given* swing-up policy: LQR
+/// catch inside the basin, the policy's swing-up outside it. The live
+/// visualization drives each island's arm with its current champion through this.
+pub fn recover_torque_with_policy<P: SwingUpPolicy>(
+    sim: &Pendulum,
+    policy: &P,
+    k: &crate::control::Vec4,
+    e_up: f64,
+    u_max: f64,
+) -> f64 {
+    let w = |a: f64| (a + std::f64::consts::PI).rem_euclid(2.0 * std::f64::consts::PI) - std::f64::consts::PI;
+    let tip = w(sim.theta[0] - std::f64::consts::PI).abs() + w(sim.theta[1] - std::f64::consts::PI).abs();
+    if tip < 1.0 {
+        crate::control::balance_torque(k, &sim.theta, &sim.omega, u_max)
+    } else {
+        policy.torque(sim, e_up, u_max)
+    }
+}
+
 /// Scalar fitness (higher is better) from a rollout. A caught arm always
 /// outscores any miss, and is rewarded for catching *fast*. A miss is scored by
 /// its **closest approach** to upright (`min_tip`), not its arbitrary final
@@ -407,12 +426,106 @@ pub struct PopulationOutcome {
     pub reached: bool,
 }
 
-/// Run a population of CEM islands on the nominal swing-up. With `share`, every
-/// `migrate_every` generations each island writes its champion into a shared
-/// RuVector store and migrates the global best back into its own search; without
-/// it the islands are independent. Returns the rollouts needed to first reach
-/// `target` fitness. Deterministic in `seed` — and `share` is the *only*
-/// difference between the two conditions given the same seed.
+/// A **steppable** population of CEM islands sharing through RuVector — the core
+/// the headless experiment ([`population_run`]) and the live visualization both
+/// drive. Several deliberately-weak islands search the nominal swing-up; with
+/// sharing, every `migrate_every` generations each writes its champion into a
+/// shared RuVector store and migrates the global best back into its own search.
+/// Deterministic in `seed` (sharing is the only difference between conditions).
+#[cfg(feature = "vectordb")]
+pub struct PopulationSim {
+    islands: Vec<Island>,
+    store: crate::memory::SharedPolicyStore,
+    cases: Vec<(f64, [f64; 2])>,
+    pop: usize,
+    migrate_every: usize,
+    share: bool,
+    generation: usize,
+    migrated_last: bool,
+    total_rollouts: usize,
+}
+
+#[cfg(feature = "vectordb")]
+impl PopulationSim {
+    pub fn new(seed: u64, n_islands: usize, pop: usize, n_cases: usize, migrate_every: usize, share: bool, store_path: &str) -> Self {
+        use std::f64::consts::PI;
+        let mut crng = Smix(seed ^ 0xABCD);
+        let cases: Vec<(f64, [f64; 2])> = (0..n_cases)
+            .map(|_| (0.0, [PI + (crng.unit() * 2.0 - 1.0) * PI, PI + (crng.unit() * 2.0 - 1.0) * PI]))
+            .collect();
+        let init = EnergyShapingPolicy::baseline().p;
+        let islands = (0..n_islands).map(|i| Island::new(seed.wrapping_add(i as u64 + 1), init)).collect();
+        let store = crate::memory::SharedPolicyStore::new(store_path, NP).expect("open shared store");
+        Self { islands, store, cases, pop, migrate_every, share, generation: 0, migrated_last: false, total_rollouts: 0 }
+    }
+
+    /// Advance every island one generation; migrate if it's a sharing generation.
+    /// Returns whether a migration happened this generation.
+    pub fn step_generation(&mut self) -> bool {
+        for isl in &mut self.islands {
+            self.total_rollouts += isl.step(&self.cases, self.pop);
+        }
+        self.migrated_last = false;
+        if self.share && (self.generation + 1) % self.migrate_every == 0 {
+            for isl in &self.islands {
+                let _ = self.store.insert(&isl.champion, isl.champ_fit);
+            }
+            if let Ok(Some((best_p, best_f))) = self.store.best() {
+                for isl in &mut self.islands {
+                    if best_f > isl.champ_fit {
+                        // Adopt the global discovery and re-widen to explore around it.
+                        for d in 0..NP {
+                            isl.mean[d] = best_p[d];
+                        }
+                        isl.std = [6.0, 4.0, 4.0, 2.0, 2.0];
+                        isl.champion = std::array::from_fn(|d| best_p[d]);
+                        isl.champ_fit = best_f;
+                    }
+                }
+                self.migrated_last = true;
+            }
+        }
+        self.generation += 1;
+        self.migrated_last
+    }
+
+    pub fn set_sharing(&mut self, share: bool) {
+        self.share = share;
+    }
+    pub fn sharing(&self) -> bool {
+        self.share
+    }
+    pub fn n_islands(&self) -> usize {
+        self.islands.len()
+    }
+    pub fn champion(&self, i: usize) -> [f64; NP] {
+        self.islands[i].champion
+    }
+    pub fn fitness(&self, i: usize) -> f64 {
+        self.islands[i].champ_fit
+    }
+    pub fn generation(&self) -> usize {
+        self.generation
+    }
+    pub fn total_rollouts(&self) -> usize {
+        self.total_rollouts
+    }
+    pub fn migrated_last(&self) -> bool {
+        self.migrated_last
+    }
+    /// Lowest champion fitness across the population (the laggard floor).
+    pub fn worst_fitness(&self) -> f64 {
+        self.islands.iter().map(|i| i.champ_fit).fold(f64::INFINITY, f64::min)
+    }
+    /// Index of the island with the best champion.
+    pub fn best_island(&self) -> usize {
+        (0..self.islands.len()).max_by(|&a, &b| self.islands[a].champ_fit.partial_cmp(&self.islands[b].champ_fit).unwrap()).unwrap_or(0)
+    }
+}
+
+/// Run the population headlessly and return the rollouts to first bring the
+/// *whole* population (worst island) to `target` fitness — a thin driver over
+/// [`PopulationSim`]. `share` is the only difference between conditions.
 #[cfg(feature = "vectordb")]
 #[allow(clippy::too_many_arguments)]
 pub fn population_run(
@@ -426,57 +539,14 @@ pub fn population_run(
     target: f64,
     store_path: &str,
 ) -> PopulationOutcome {
-    use std::f64::consts::PI;
-    // Fixed, seeded training cases shared by all islands (so fitnesses compare).
-    let mut crng = Smix(seed ^ 0xABCD);
-    let cases: Vec<(f64, [f64; 2])> = (0..n_cases)
-        .map(|_| {
-            let th = [
-                PI + (crng.unit() * 2.0 - 1.0) * PI,
-                PI + (crng.unit() * 2.0 - 1.0) * PI,
-            ];
-            (0.0, th)
-        })
-        .collect();
-
-    let init = EnergyShapingPolicy::baseline().p;
-    let mut islands: Vec<Island> = (0..n_islands).map(|i| Island::new(seed.wrapping_add(i as u64 + 1), init)).collect();
-    let mut store = crate::memory::SharedPolicyStore::new(store_path, NP).expect("open shared store");
-
-    let mut rollouts = 0usize;
+    let mut sim = PopulationSim::new(seed, n_islands, pop, n_cases, migrate_every, share, store_path);
     for gen in 0..max_gens {
-        for isl in &mut islands {
-            rollouts += isl.step(&cases, pop);
-        }
-        if share && (gen + 1) % migrate_every == 0 {
-            for isl in &islands {
-                store.insert(&isl.champion, isl.champ_fit).expect("share champion");
-            }
-            if let Ok(Some((best_p, best_f))) = store.best() {
-                for isl in &mut islands {
-                    if best_f > isl.champ_fit {
-                        // Adopt the global discovery as the new search centre and
-                        // re-widen to explore around it.
-                        for d in 0..NP {
-                            isl.mean[d] = best_p[d];
-                        }
-                        isl.std = [6.0, 4.0, 4.0, 2.0, 2.0];
-                        isl.champion = std::array::from_fn(|d| best_p[d]);
-                        isl.champ_fit = best_f;
-                    }
-                }
-            }
-        }
-        // Measure when the WHOLE population reaches competence (min island ≥
-        // target). The single best island is high regardless of sharing — the
-        // point of sharing is to pull the *laggards* up to the best discovery.
-        let worst = islands.iter().map(|i| i.champ_fit).fold(f64::INFINITY, f64::min);
-        if worst >= target {
-            return PopulationOutcome { rollouts, generations: gen + 1, best_fitness: worst, reached: true };
+        sim.step_generation();
+        if sim.worst_fitness() >= target {
+            return PopulationOutcome { rollouts: sim.total_rollouts(), generations: gen + 1, best_fitness: sim.worst_fitness(), reached: true };
         }
     }
-    let worst = islands.iter().map(|i| i.champ_fit).fold(f64::INFINITY, f64::min);
-    PopulationOutcome { rollouts, generations: max_gens, best_fitness: worst, reached: false }
+    PopulationOutcome { rollouts: sim.total_rollouts(), generations: max_gens, best_fitness: sim.worst_fitness(), reached: false }
 }
 
 #[cfg(test)]
@@ -556,6 +626,29 @@ mod tests {
         let best = best_library_champion_for(l1, m1, b1, 15.0);
         let max_manual = POLICY_LIBRARY.iter().map(|&(_, _, _, p)| rec(p)).max().unwrap();
         assert_eq!(rec(best), max_manual, "helper returns the per-arm best library champion");
+    }
+
+    #[cfg(feature = "vectordb")]
+    #[test]
+    fn population_sim_steps_and_migrates() {
+        let path = std::env::temp_dir().join("popsim_test.db").to_string_lossy().into_owned();
+        // migrate_every = 2 → a migration happens on the 2nd generation.
+        let mut sim = PopulationSim::new(7, 4, 8, 5, 2, true, &path);
+        sim.step_generation();
+        assert_eq!(sim.generation(), 1);
+        assert!(sim.fitness(0) > f64::NEG_INFINITY, "stepping yields a finite champion fitness");
+
+        let migrated = sim.step_generation(); // generation 2 → sharing generation
+        assert!(migrated, "a migration should happen on the sharing generation");
+        // After migration the laggards adopt the global best, so every island
+        // ends at the same (best) fitness — the floor is lifted to the ceiling.
+        let best = sim.fitness(sim.best_island());
+        assert!(
+            (sim.worst_fitness() - best).abs() < 1e-9,
+            "migration should lift every island to the global best ({} vs {})",
+            sim.worst_fitness(),
+            best
+        );
     }
 
     #[test]

@@ -54,5 +54,12 @@ required-features = ["vectordb"]
 name = "evolve"
 path = "src/bin/evolve.rs"
 
+# Stage 4: live visualization of the competing population (needs both the game
+# graphics stack and the RuVector sharing channel).
+[[bin]]
+name = "popviz"
+path = "src/bin/popviz.rs"
+required-features = ["game", "vectordb"]
+
 [profile.release]
 opt-level = 2

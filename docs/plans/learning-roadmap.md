@@ -129,8 +129,14 @@ search often never gets *every* island there, while sharing does). Same seed in
 both conditions, so sharing is the only difference. Test:
 `ruvector_sharing_accelerates_the_population`. This is the literal "hundreds
 competing, learning from each other," with RuVector as the collective brain.
-**Next:** similarity-based migration (RuVector nearest-neighbour) instead of
-global-best; a live/interactive visualization of the competing population.
+**Live visualization** *(shipped)*: `popviz` (`--features "game vectordb"`) draws
+one live arm per island, each driven in real time by that island's current
+champion, while a background thread evolves the population. **S** toggles sharing
+(watch a laggard arm inherit the global-best policy the instant a migration
+fires); **R** restarts. The steppable core is `PopulationSim` (test
+`population_sim_steps_and_migrates`). The viz is interactive (visuals not
+headless-verified). **Next:** similarity-based migration (RuVector
+nearest-neighbour) instead of global-best.
 
 ### Stage 5 — Residual RL (optional)
 If ES plateaus, add a small learned residual *on top of* the model-based
