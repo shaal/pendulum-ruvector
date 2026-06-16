@@ -5,4 +5,6 @@ pendulum_ruvector.db
 pendulum_ruvector.db/
 phase2_configs.db
 phase2_configs.db/
+play_configs.db
+play_configs.db/
 /rust_triple_pendulum.gif

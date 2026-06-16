@@ -144,6 +144,13 @@ impl ConfigMemory {
         Ok(self.next_id)
     }
 
+    /// The exact probe gain the seeds were fingerprinted under. Online probing
+    /// **must** apply this gain (not one recomputed at a different control dt),
+    /// or the measured closed-loop signature won't live in the seeded space.
+    pub fn probe_gain(&self) -> Vec4 {
+        nominal_probe_gain(SEED_DT)
+    }
+
     /// Whiten a raw signature into the embedding actually stored / queried.
     fn whiten(&self, sig: &Signature) -> Vec<f32> {
         (0..SIG_DIM)
