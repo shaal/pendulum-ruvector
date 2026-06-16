@@ -1,0 +1,36 @@
+[package]
+name = "pendulum_rs"
+version = "0.1.0"
+edition = "2021"
+description = "Rust n-link pendulum: Lagrangian dynamics + Rerun visualization + in-process RuVector (vector DB + GNN)."
+
+[[bin]]
+name = "pendulum_rs"
+path = "src/main.rs"
+
+[dependencies]
+# Rerun Rust SDK, pinned to match the locally-installed viewer (0.33.0).
+# `default-features = false` + `sdk` avoids building the embedded wgpu/egui
+# viewer; `.spawn()` launches the external `rerun` binary you already have,
+# and `.save()` writes an .rrd file. This keeps first compile far lighter.
+rerun = { version = "0.33", default-features = false, features = ["sdk"] }
+
+# --- RuVector in-process integration (optional, behind features) ----------
+# `vectordb`: insert each step's state vector into RuVector's HNSW store.
+#   We disable RuVector's default features because they include `simd-avx512`
+#   (x86-only) and `simsimd` (C build) — both unfriendly on Apple Silicon.
+#   The portable `storage`/`hnsw`/`parallel` features are all we need.
+ruvector-core = { path = "../RuVector/crates/ruvector-core", default-features = false, features = ["storage", "hnsw", "parallel"], optional = true }
+# `gnn`: message-pass over the link/joint graph with a real RuVector GNN layer.
+ruvector-gnn = { path = "../RuVector/crates/ruvector-gnn", optional = true }
+serde_json = { version = "1", optional = true }
+
+[features]
+default = []
+vectordb = ["dep:ruvector-core", "dep:serde_json"]
+gnn = ["dep:ruvector-gnn"]
+# Convenience: enable the whole unified loop.
+ruvector = ["vectordb", "gnn"]
+
+[profile.release]
+opt-level = 2
