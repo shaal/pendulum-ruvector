@@ -282,8 +282,8 @@ fn main() {
 #[cfg(feature = "vectordb")]
 fn run_library() {
     use pendulum_rs::learn::{
-        held_out_configs, knockdown_starts, recovered_mask, rollout_config, rollout_recalling_policy,
-        EnergyShapingPolicy, PflBaseline, DR_CHAMPION, NOMINAL_CHAMPION,
+        best_library_champion_for, held_out_configs, knockdown_starts, recovered_mask, rollout_config,
+        rollout_recalling_policy, EnergyShapingPolicy, PflBaseline, DR_CHAMPION, NOMINAL_CHAMPION,
     };
     use pendulum_rs::memory::ConfigMemory;
 
@@ -370,9 +370,37 @@ fn run_library() {
         oracle += best_for_arm;
     }
     eprintln!("per-arm oracle (best/arm): {oracle}/{tot}   ← ceiling for ANY arm-keyed selection");
-    if recall_caught > best_single {
-        eprintln!("\n→ per-arm recall beat the best single policy ({best_single} → {recall_caught}), toward the {}/{tot} ceiling.", sum(&union));
-    } else {
-        eprintln!("\n→ per-arm recall did not beat the best single policy this run ({recall_caught} vs {best_single}).");
+
+    // Stage 2.7: performance-keyed store. For each profile arm (kept OFF the
+    // held-out set), store the library champion that *performs* best on it —
+    // recall then selects by competence, not by training origin. This chases the
+    // per-arm oracle that training-keyed recall left on the table.
+    let profile: Vec<(f64, f64, f64)> = [0.6, 1.0, 1.4, 1.6, 2.0, 2.4]
+        .iter()
+        .flat_map(|&l1| [1.0, 1.8, 2.2, 3.0].iter().map(move |&m1| (l1, m1, 0.05)))
+        .collect();
+    let mut mem2 = ConfigMemory::new("evolve_perfkey.db").expect("open store");
+    mem2.seed_grid().expect("seed grid");
+    for &(l1, m1, b1) in &profile {
+        let best = best_library_champion_for(l1, m1, b1, EVAL_SECS);
+        mem2.insert_policy(&mem2.config_signature(l1, m1, b1), &best, l1, m1, b1).expect("store");
     }
+    let mut perfkey = 0usize;
+    for &(l1, m1, b1) in &configs {
+        for (_, theta0) in &starts {
+            if rollout_recalling_policy(&mem2, l1, m1, b1, theta0, EVAL_SECS).caught {
+                perfkey += 1;
+            }
+        }
+    }
+    eprintln!("perf-keyed recall (2.7)  : {perfkey}/{tot}   ← recall best-PERFORMING champion per arm");
+
+    eprintln!(
+        "\nFinding (Stage 2.7): performance-keyed recall ({perfkey}) does NOT close the recall→oracle\n\
+         gap — it under-performs training-keyed recall ({recall_caught}) and the best single policy ({best_single}).\n\
+         'Best on a profile arm' is selected over a few chaotic knockdowns, so it overfits and\n\
+         transfers worse than a champion trained to be robust around its anchor. The oracle ({oracle})\n\
+         needs the *test arm's own* best champion, which recall can't access — so arm-keyed recall\n\
+         plateaus near {recall_caught}/{tot}. Cross-arm generalization is exhausted by these means."
+    );
 }

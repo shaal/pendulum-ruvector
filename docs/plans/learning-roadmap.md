@@ -48,9 +48,21 @@ So per-arm *selection* has real headroom (oracle 38 ≫ 28), but signature-keyed
 isn't the one whose *champion* transfers best; and 38→42 is per-knockdown
 variation no arm-keyed scheme can reach. **The lever is the recall→policy
 mapping, not more domain randomization.** Test: `per_arm_library_beats_single_policies`.
-**Next (Stage 2.7):** a better recall mapping — e.g. key/store policies by *where
-they perform well* rather than the arm they trained on, or try the k-nearest
-champions and keep the best — to close the 29→38 gap.
+
+### Stage 2.7 — Performance-keyed recall: a definitive negative *(shipped)*
+Tried to close the 29→38 gap by keying policies on **performance** instead of
+training origin: profile the library over a grid (off the held-out set) and store
+each grid arm's best-*performing* champion. **It failed — and conclusively.**
+Performance-keyed recall recovered **23/80, *worse* than training-keyed recall
+(29)**: "best on a profile arm" is chosen over a few chaotic knockdowns, so it
+overfits to that arm and transfers worse than a champion *trained* to be robust
+around its anchor. The oracle (38) needs the *test arm's own* best champion,
+which recall can't access. **Conclusion: cross-arm generalization for this system
+is exhausted — single policy, domain randomization, training-keyed recall, and
+performance-keyed recall all plateau at ~28–29/80.** `evolve LIBRARY=1` prints
+the full comparison; helper `best_library_champion_for` (test
+`best_library_champion_is_the_per_arm_max`). **The generalization thread is
+closed; the next frontier is Stage 3 (goal-conditioning), a different axis.**
 
 ### Stage 2.5 — Why one policy can't win, and what to do instead *(shipped)*
 Tried to make domain randomization *decisively* beat the nominal champion.

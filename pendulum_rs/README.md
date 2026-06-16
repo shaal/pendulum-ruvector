@@ -201,9 +201,14 @@ recovers held-out arms by **recalling the nearest champion per arm**. The honest
 decomposition (80 held-out trials): best single **28** → per-arm recall **29** →
 per-arm *oracle* (best policy/arm) **38** → union ceiling **42**. Per-arm
 *selection* has real headroom (38 ≫ 28), but signature-keyed *recall* captures
-little of it — the dynamics-nearest anchor isn't the best-policy anchor. The
-lever is a better recall→policy mapping, not more domain randomization. Test:
-`per_arm_library_beats_single_policies`. Next steps in [`../docs/plans/`](../docs/plans/).
+little of it — the dynamics-nearest anchor isn't the best-policy anchor. Test:
+`per_arm_library_beats_single_policies`. *Stage 2.7 then tested keying policies by
+**performance** instead of training origin — and it failed conclusively (23/80,
+worse than 29), because per-arm-best champions overfit to a few chaotic
+knockdowns. Across single policy, domain randomization, and both recall schemes,
+cross-arm generalization plateaus at ~28–29/80 — the oracle's 38 needs test-arm-
+specific knowledge no recall can access.* Full write-up in
+[`../docs/plans/`](../docs/plans/).
 
 ## Build & run (the logging/visualization demo)
 

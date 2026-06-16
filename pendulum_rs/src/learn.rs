@@ -234,6 +234,24 @@ pub fn recovered_mask<P: SwingUpPolicy>(
     mask
 }
 
+/// The [`POLICY_LIBRARY`] champion that recovers the most knockdowns on a given
+/// arm — the per-arm *best*. Used to build a **performance-keyed** policy store
+/// (Stage 2.7): store the champion that *performs* best on each profile arm,
+/// rather than the one that happened to *train* on it.
+pub fn best_library_champion_for(l1: f64, m1: f64, b1: f64, secs: f64) -> [f64; NP] {
+    let starts = knockdown_starts();
+    POLICY_LIBRARY
+        .iter()
+        .max_by_key(|&&(_, _, _, p)| {
+            starts
+                .iter()
+                .filter(|(_, t)| rollout_config(l1, m1, b1, t, &EnergyShapingPolicy { p }, secs).caught)
+                .count()
+        })
+        .map(|&(_, _, _, p)| p)
+        .expect("library is non-empty")
+}
+
 /// Link-length band for an arm, used to stratify the held-out generalization
 /// report. (Counter-intuitively, *short* link-2 is the hard case here: less
 /// leverage for the single motor to pump energy, so fewer knockdowns recover —
@@ -359,6 +377,23 @@ mod tests {
             union > best_single + 5,
             "union ({union}) should clearly exceed the best single policy ({best_single})"
         );
+    }
+
+    #[test]
+    fn best_library_champion_is_the_per_arm_max() {
+        // The helper must return the library champion that genuinely recovers the
+        // most on the given arm (the per-arm best the oracle is built from).
+        let (l1, m1, b1) = (1.0, 2.0, 0.05);
+        let starts = knockdown_starts();
+        let rec = |p: [f64; NP]| {
+            starts
+                .iter()
+                .filter(|(_, t)| rollout_config(l1, m1, b1, t, &EnergyShapingPolicy { p }, 15.0).caught)
+                .count()
+        };
+        let best = best_library_champion_for(l1, m1, b1, 15.0);
+        let max_manual = POLICY_LIBRARY.iter().map(|&(_, _, _, p)| rec(p)).max().unwrap();
+        assert_eq!(rec(best), max_manual, "helper returns the per-arm best library champion");
     }
 
     #[test]
