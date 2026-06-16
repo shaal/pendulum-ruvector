@@ -1,0 +1,8 @@
+# Core runtime dependencies. Install with either:
+#   uv pip install -r requirements.txt
+#   uv sync            # if using the pyproject.toml below
+numpy>=1.24
+scipy>=1.10
+rerun-sdk>=0.18
+typer>=0.12
+pyyaml>=6.0

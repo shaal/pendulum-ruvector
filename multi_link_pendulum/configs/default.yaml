@@ -1,0 +1,26 @@
+# Default configuration for the multi-link pendulum testbed.
+# Per-link lists (masses/lengths/damping) must have length == n_links.
+# A scalar is broadcast to every link, so `masses: 1.0` also works.
+
+pendulum:
+  n_links: 2
+  masses: [1.0, 1.0]      # [kg] point mass at each link's tip
+  lengths: [1.0, 1.0]     # [m] rod lengths
+  damping: [0.05, 0.05]   # [N·m·s/rad] viscous joint friction (0 = ideal)
+  gravity: 9.81           # [m/s^2]
+  dt: 0.01                # [s] integration timestep (100 Hz)
+
+noise:
+  angle_std: 0.02         # [rad] encoder jitter (~1.1 deg)
+  velocity_std: 0.05      # [rad/s]
+  torque_std: 0.0         # [N·m]
+  angle_bias: 0.03        # [rad] hidden per-encoder zero-offset to recover
+  dropout_prob: 0.0       # probability of a held/stale sample
+  seed: 0
+
+episode:
+  mode: passive           # "passive" | "actuated"
+  steps: 1500             # number of timesteps to simulate
+  # Initial condition; null -> simulator default (links ~horizontal).
+  theta0: null
+  omega0: null
