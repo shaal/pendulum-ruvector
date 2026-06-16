@@ -36,11 +36,18 @@ fitness + `evolve` binary; champion beats baseline (7/10 → 10/10 default seed,
 6–10 across seeds). **Remaining:** store winners in RuVector, domain
 randomization (→ Stage 2), game payoff. Use ship-task.
 
-### Stage 2 — Generalization via domain randomization
+### Stage 2 — Generalization via domain randomization *(shipped; marginal win)*
 Evolve a *single* policy over randomized arm configs so it recovers across arms
-it never saw — a stronger, learned version of the GNN interpolation. Compose:
-recall nearest learned policy, then run it. **Target: recover across a held-out
-config set.**
+it never saw. **Done:** `rollout_config` (any arm), `evolve RANDOMIZE_ARM=1`,
+held-out eval, and the **live recall consumer** (`rollout_recalling_policy` —
+controller recalls a stored policy by signature and runs it; closes the deferred
+Stage-1 gap). **Honest result:** the DR champion edges the nominal champion on
+held-out arms (29/80 vs 27/80, baseline 19/80) but only marginally and only with
+warm-start + the best seed (cold-start DR loses). The nominal champion transfers
+surprisingly well and the heavy/long held-out arms are hard for everything.
+**Remaining (Stage 2.5):** make the generalization *decisive* — curriculum
+(easy→hard arms), fitness reweighting so hard arms aren't drowned, broader seed
+statistics.
 
 ### Stage 3 — Goal-conditioning (changeable goal)
 Make the target a parameter (posture / energy / even "spin at rate ω"). The LQR

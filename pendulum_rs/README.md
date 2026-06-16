@@ -163,6 +163,33 @@ seeded). Implementation is a few hundred lines of dependency-light Rust
 `evolved_champion_beats_baseline` pins the champion. Design + roadmap:
 [`../docs/plans/`](../docs/plans/).
 
+### Stage 2: domain randomization + the live recall consumer
+
+Two pieces. First, **the controller now uses what it stored**: `recover` recalls
+the nearest learned swing-up policy from RuVector by the arm's config signature
+and runs it (LQR catch + recalled swing-up), closing the loop discover → store →
+recall → run (`learn::rollout_recalling_policy`; test
+`controller_recalls_and_runs_a_stored_policy`).
+
+Second, **domain-randomized evolution** — each candidate is scored over randomized
+*arm configs* (not just the nominal arm), so the champion must generalize:
+
+```bash
+cargo run --release --bin evolve                     # nominal-arm search (Stage 1)
+RANDOMIZE_ARM=1 cargo run --release --bin evolve     # cross-arm search (Stage 2)
+```
+
+**Honest result.** On a held-out set of arms it never trained on (80 arm×knockdown
+trials), the domain-randomized champion recovers **29/80**, edging the nominal-only
+champion's **27/80** and clearly beating the hand-tuned baseline's **19/80**. But
+the win over the nominal champion is *marginal and fragile*: it needed warm-starting
+the search from the nominal champion and the best of several seeds (cold-start DR
+*loses*, 19–24/80). The deeper finding is real — a well-tuned nominal champion
+transfers surprisingly well, and these heavy/long arms are hard for *every* policy
+(24–36% recovery). Test `domain_randomized_champion_generalizes` pins it.
+Strengthening this (curriculum, fitness reweighting) is future work in
+[`../docs/plans/`](../docs/plans/).
+
 ## Build & run (the logging/visualization demo)
 
 The base build is self-contained (just the Rerun SDK):
