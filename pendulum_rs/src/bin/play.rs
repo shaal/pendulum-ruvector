@@ -2,8 +2,10 @@
 //!
 //! Two underactuated 2-link arms (only joint 0 is motorized) stand side by side.
 //! LEFT is yours: press **A / D** to drive the base motor left / right and try
-//! to keep the arm balanced straight up. RIGHT is the auto arm (LQR balance that
-//! recalibrates on disturbance — Phase 2 will make this RuVector-driven).
+//! to keep the arm balanced straight up. RIGHT is the auto arm: LQR balance that
+//! recalibrates on disturbance, plus a Phase-3 collocated-PFL swing-up that
+//! hoists it back up from most full knockdowns (the gain it adopts is recalled
+//! from RuVector by recognition in the `estimate` demo; here it uses the oracle).
 //!
 //! Press **SPACE** to fire a disturbance (both arms' second link extends): watch
 //! the auto arm recover while you fight to keep yours up. **R** resets.
@@ -75,7 +77,9 @@ impl Game {
         }
         self.you.set_length(1, NEW_LEN);
         self.auto.set_length(1, NEW_LEN);
-        // The auto arm recalibrates (oracle now; RuVector in Phase 2).
+        // The auto arm recalibrates. Here it uses the oracle for an instant,
+        // jitter-free gain; the `estimate` demo shows the same recalibration done
+        // by RuVector recognition (Phase 2) and GNN interpolation (Phase 3).
         self.k_auto = balance_gain(&self.auto, DT);
         self.e_up = upright_energy(&self.auto);
         self.disturbed = true;
@@ -91,9 +95,10 @@ impl Game {
         }
 
         // Auto: ALWAYS tries to recover — LQR balance within its basin (catches
-        // pokes, even big ones), energy swing-up when knocked further out. It is
-        // never disabled. (A full sideways/hang knockdown is past what swing-up
-        // can catch for a double pendulum — that's Phase 3.)
+        // pokes, even big ones), and Phase-3 collocated-PFL energy swing-up when
+        // knocked further out. It now hoists itself back up from most full
+        // knockdowns, including a dead hang (≈7/10 of the `check` harness starts);
+        // a few worst-case configurations still defeat it (chaotic, unsolved).
         let u = recover_torque(&self.auto, &self.k_auto, self.e_up, U_MAX);
         self.auto.step(&[u, 0.0]);
         self.auto_up = Self::tip_error(&self.auto) < 1.4;

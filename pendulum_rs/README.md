@@ -96,6 +96,47 @@ changes shift the same gravity-stiffness terms and are confounded with length
 under measurement noise; generalizing across the full config space is what
 Phase-3's GNN interpolation is for. Tests: `cargo test --features vectordb`.
 
+## Phase 3: swing-up + GNN generalization
+
+### Swing-up — recover from a full knockdown (`check` binary)
+
+Phase 1's controller only catches small pokes. Phase 3 adds a **collocated
+partial-feedback-linearization (PFL)** swing-up (`control::swingup_pfl`): the
+passive-joint equation lets us solve `q̈₁` from `q̈₀`, so the actuated row becomes
+`u = M̄·q̈₀ + h̄` and commanding `q̈₀ = v` *feedback-linearizes* joint 0 regardless
+of configuration. The outer loop is the classic energy pump `v = k_e·(E_up−E)·ω₀`
+(aggressive, near-bang-bang); the LQR catches at the top (`recover_torque`).
+
+```bash
+cargo run --release --bin check        # recovery harness over 10 knockdown starts
+```
+
+**Honest result:** this lifts recovery from **2/4** (the naive direct-torque
+pump) to **7/10** diverse knockdowns — *including a dead vertical hang*. A few
+worst-case starts (hard-sideways, both-folded) still defeat it: full swing-up of
+a double pendulum from *any* state is genuinely research-grade and remains
+unsolved here. The improved swing-up is live in the `play` game, so the RuVector
+arm now hoists itself back up from most knockdowns. Test:
+`swings_up_from_a_dead_hang`.
+
+### GNN interpolation — generalize between seeded arms
+
+Nearest-neighbour recall *snaps* an unseen arm to one seeded config.
+`ConfigMemory::recall_interpolated` (feature `gnn`) instead treats the seeds as a
+graph and message-passes the query over its k nearest neighbours with a real
+`ruvector-gnn::RuvectorLayer`, then adopts the **attention-weighted blend** of
+their gains — interpolating to arms it never saw.
+
+```bash
+cargo run --release --features ruvector --bin estimate   # prints the GNN blend
+```
+
+**Honest note:** the layer ships *untrained*, so the gain is the graph-attention
+blend (`K = Σ wᵢ·Kᵢ`, `wᵢ = softmax(−distance)`), not a learned regression — the
+message-pass contextualizes the neighbourhood, the graph weights do the
+interpolating. For a between-seed arm the blend lands measurably closer to the
+true gain than any single neighbour (test: `gnn_interpolation_beats_snapping`).
+
 ## Build & run (the logging/visualization demo)
 
 The base build is self-contained (just the Rerun SDK):

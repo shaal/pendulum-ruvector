@@ -158,7 +158,7 @@ learned calibrator predicts.
 |---|---|---|
 | **1** | Underactuated arm, in-Rust LQR, adaptive-vs-naive balance, interactive game | ✅ done |
 | **2** | RuVector *is* the estimator — recall nearest past dynamics to recalibrate fast (replaces the Phase-1 oracle) | ✅ done |
-| **3** | Energy swing-up (recover from any fall) + GNN generalization across arm configs | planned |
+| **3** | Energy swing-up (recover from a full knockdown) + GNN generalization across arm configs | ✅ done (swing-up partway) |
 
 In Phase 1 the adaptive arm is told the new parameters by an oracle. **Phase 2
 swaps that for RuVector** (`cargo run --features vectordb --bin estimate`): the
@@ -169,8 +169,11 @@ keeps its stale gain and topples; the adaptive arm recovers after an honest
 recognition lag, and a self-learning loop (insert each catch) shrinks that lag
 ~60% on a repeat. It recognizes structural (link-length) changes within an
 operating envelope; broader generalization across the config space is Phase 3.
-Phase 3 adds swing-up so the arm recovers from a full knockdown, and uses the
-GNN to interpolate to arm configurations never seen before. See
+**Phase 3** adds a collocated-PFL swing-up so the arm hoists itself back up from
+most full knockdowns (7/10 of the `check` harness starts, including a dead hang —
+full recovery from *any* state stays research-grade), and uses a real
+`ruvector-gnn` layer to interpolate the gain across the config graph for arms
+between seeds instead of snapping to one. See
 [`pendulum_rs/README.md`](pendulum_rs/README.md) for the control details.
 
 ## Status

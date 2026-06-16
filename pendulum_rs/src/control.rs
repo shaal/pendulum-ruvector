@@ -207,23 +207,65 @@ pub fn upright_energy(sim: &Pendulum) -> f64 {
 /// Energy-pumping swing-up torque on joint 0: inject energy when the arm has
 /// less than the upright energy, pulling it toward the top where the LQR can
 /// catch it. `u ∝ (E_up − E)·ω₀`. Clamped to the motor limit.
+///
+/// This is the *naive* pump (torque applied directly): it works for small pokes
+/// but fights the arm's own nonlinear dynamics on a full knockdown. See
+/// [`swingup_pfl`] for the collocated-PFL version that actually hoists from hang.
 pub fn swingup_torque(sim: &Pendulum, e_up: f64, u_max: f64) -> f64 {
     let e = sim.total_energy();
     let k_e = 6.0;
     (k_e * (e_up - e) * sim.omega[0]).clamp(-u_max, u_max)
 }
 
+/// **Collocated partial-feedback-linearization swing-up** for the Pendubot.
+///
+/// The passive-joint row of `M·q̈ + bias = [u, 0]` lets us solve `q̈₁` in terms of
+/// `q̈₀`; substituting into the actuated row gives `u = M̄·q̈₀ + h̄`, where
+/// `M̄ = m₀₀ − m₀₁m₁₀/m₁₁` and `h̄ = bias₀ − m₀₁·bias₁/m₁₁`. So commanding a
+/// desired actuated acceleration `q̈₀ = v` *feedback-linearizes* joint 0
+/// regardless of configuration — the controller no longer fights gravity and
+/// Coriolis, it cancels them. The outer loop then only has to shape `v`:
+///
+/// ```text
+/// v = k_e·(E_up − E)·ω₀   (pump mechanical energy toward the upright total)
+/// ```
+///
+/// The energy term is the classic Spong/Fantoni-Lozano pump (a `q̈₀` in the
+/// direction of `ω₀` scaled by the energy deficit); the PFL wrapping is what
+/// makes it effective from a full hang. Empirically it lifts the `check`
+/// recovery harness from 2/4 knockdowns (naive direct-torque pump) to **7/10
+/// diverse starts, including a dead vertical hang** — full recovery from *any*
+/// state remains research-grade and unsolved here (chaotic, basin-sensitive).
+/// Adding posture/damping terms to `v` was found to *fight* the pump and is
+/// omitted. Returns the clamped joint-0 torque.
+pub fn swingup_pfl(sim: &Pendulum, e_up: f64, u_max: f64) -> f64 {
+    let (m, bias) = sim.manipulator_terms(&sim.theta, &sim.omega);
+    // Guard the inversion of the passive-joint inertia.
+    let m11 = if m[1][1].abs() < 1e-9 { 1e-9 } else { m[1][1] };
+    // Collocated inertia and bias: u = M̄·q̈₀ + h̄ realizes the commanded q̈₀ = v.
+    let m_bar = m[0][0] - m[0][1] * m[1][0] / m11;
+    let h_bar = bias[0] - m[0][1] * bias[1] / m11;
+
+    // Aggressive pumping (the q̈₀ command saturates the motor most of the swing,
+    // i.e. near-bang-bang energy injection) recovers the most knockdowns on the
+    // `check` harness; gentler gains stall in low-energy limit cycles.
+    let k_e = 20.0;
+    let v = k_e * (e_up - sim.total_energy()) * sim.omega[0];
+
+    (m_bar * v + h_bar).clamp(-u_max, u_max)
+}
+
 /// Always-on recovery controller: balance with LQR when close to upright,
-/// otherwise swing up. This is what lets the auto arm "always try to recover".
+/// otherwise swing up via collocated PFL. This is what lets the auto arm
+/// "always try to recover", now from a full knockdown rather than just pokes.
 pub fn recover_torque(sim: &Pendulum, k: &Vec4, e_up: f64, u_max: f64) -> f64 {
-    let w = |a: f64| (a + PI).rem_euclid(2.0 * PI) - PI;
-    let tip_err = w(sim.theta[0] - PI).abs() + w(sim.theta[1] - PI).abs();
-    // LQR has a sizable basin of attraction; use it for anything it can catch,
-    // and only attempt energy swing-up when knocked well past that.
+    let tip_err = wrap(sim.theta[0] - PI).abs() + wrap(sim.theta[1] - PI).abs();
+    // Hand off to the LQR inside its basin of attraction; otherwise keep swinging
+    // up (PFL), which also brakes as the energy approaches the upright total.
     if tip_err < 1.0 {
         balance_torque(k, &sim.theta, &sim.omega, u_max)
     } else {
-        swingup_torque(sim, e_up, u_max)
+        swingup_pfl(sim, e_up, u_max)
     }
 }
 
@@ -267,4 +309,26 @@ fn mat_t_mul(a: &Mat, b: &Mat) -> Mat {
         }
     }
     c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The headline Phase-3 claim: the collocated-PFL swing-up hoists the arm
+    /// from a **dead vertical hang** all the way up, and the LQR catches it.
+    #[test]
+    fn swings_up_from_a_dead_hang() {
+        let dt = 0.005;
+        let mut sim = Pendulum::new(vec![1.0, 1.0], vec![1.0, 1.0], vec![0.05, 0.05], 9.81, dt);
+        sim.reset(vec![0.1, -0.1], vec![0.0, 0.0]); // hanging straight down
+        let k = balance_gain(&sim, dt);
+        let e_up = upright_energy(&sim);
+        for _ in 0..(15.0 / dt) as usize {
+            let u = recover_torque(&sim, &k, e_up, 150.0);
+            sim.step(&[u, 0.0]);
+        }
+        let tip_err = wrap(sim.theta[0] - PI).abs() + wrap(sim.theta[1] - PI).abs();
+        assert!(tip_err < 0.2, "should balance upright after swing-up, tip error {tip_err:.3}");
+    }
 }

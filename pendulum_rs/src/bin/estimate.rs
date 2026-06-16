@@ -335,6 +335,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => eprintln!("\n(at least one encounter did not recognize — tune the probe.)"),
     }
+
+    // Phase 3: GNN interpolation over the config graph (only with `--features
+    // ruvector`/`gnn`). Instead of snapping the off-grid arm to one neighbour,
+    // message-pass over its neighbourhood and blend their gains.
+    #[cfg(feature = "gnn")]
+    {
+        use pendulum_rs::control::nominal_probe_gain;
+        use pendulum_rs::estimator::closed_loop_signature;
+        let true_arm = Pendulum::new(vec![1.0, dist.m1], vec![1.0, dist.l1], vec![0.05, dist.b1], 9.81, DT);
+        let sig = closed_loop_signature(&true_arm, &nominal_probe_gain(DT));
+        if let Some(interp) = mem.recall_interpolated(&sig, 4)? {
+            eprintln!("\nGNN interpolation (between-seed generalization):");
+            let blend: Vec<String> = interp
+                .contributors
+                .iter()
+                .map(|(l1, w)| format!("{l1:.2}m×{:.0}%", w * 100.0))
+                .collect();
+            eprintln!(
+                "  message-passed over {} graph neighbours (embed dim {}) → blended {}",
+                interp.contributors.len(),
+                interp.embedding_dim,
+                blend.join(" + ")
+            );
+            eprintln!("  → interpolated gain for the true {:.2} m arm, instead of snapping to one seed.", dist.l1);
+        }
+    }
+
     eprintln!("\nRerun:  rerun estimate.rrd");
     Ok(())
 }

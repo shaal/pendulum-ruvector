@@ -113,24 +113,33 @@ impl Pendulum {
         self.cum_tail = cum_tail;
     }
 
-    /// Solve `M * x = rhs` for the angular accelerations.
-    pub fn angular_acceleration(&self, theta: &[f64], omega: &[f64], tau: &[f64]) -> Vec<f64> {
+    /// Assemble the manipulator equation `M(θ)·q̈ + bias(θ,ω) = τ`, returning the
+    /// inertia matrix `M` and the bias vector `bias = G(θ) + C(θ,ω)·ω + damping`
+    /// (gravity + centrifugal/Coriolis + viscous friction), all at the given
+    /// state. This is the raw form the partial-feedback-linearization swing-up
+    /// needs; `angular_acceleration` just solves `M·q̈ = τ − bias`.
+    pub fn manipulator_terms(&self, theta: &[f64], omega: &[f64]) -> (Vec<Vec<f64>>, Vec<f64>) {
         let n = self.n;
         let mut m_mat = vec![vec![0.0; n]; n];
-        let mut rhs = vec![0.0; n];
-
+        let mut bias = vec![0.0; n];
         for i in 0..n {
-            // Gravity + actuation + damping on the RHS.
-            let g_i = self.g * self.cum_tail[i] * self.l[i] * theta[i].sin();
-            rhs[i] = tau[i] - g_i - self.b[i] * omega[i];
+            // Gravity + damping.
+            bias[i] = self.g * self.cum_tail[i] * self.l[i] * theta[i].sin() + self.b[i] * omega[i];
             for j in 0..n {
                 let d = theta[i] - theta[j];
                 let coupling = self.mu[i][j] * self.l[i] * self.l[j];
                 m_mat[i][j] = coupling * d.cos();
-                // Centrifugal term C[i][j] * omega_j^2 moves to the RHS.
-                rhs[i] -= coupling * d.sin() * omega[j] * omega[j];
+                // Centrifugal term C[i][j] * omega_j^2.
+                bias[i] += coupling * d.sin() * omega[j] * omega[j];
             }
         }
+        (m_mat, bias)
+    }
+
+    /// Solve `M * x = rhs` for the angular accelerations.
+    pub fn angular_acceleration(&self, theta: &[f64], omega: &[f64], tau: &[f64]) -> Vec<f64> {
+        let (m_mat, bias) = self.manipulator_terms(theta, omega);
+        let rhs: Vec<f64> = (0..self.n).map(|i| tau[i] - bias[i]).collect();
         gauss_solve(m_mat, rhs)
     }
 
