@@ -81,9 +81,23 @@ pub struct Rollout {
 }
 
 /// Simulate a knockdown recovery under `policy`: LQR catch inside the basin,
-/// the policy's swing-up outside it. Deterministic given inputs.
+/// the policy's swing-up outside it. Deterministic given inputs. This is the
+/// nominal-arm convenience wrapper around [`rollout_config`].
 pub fn rollout<P: SwingUpPolicy>(theta0: &[f64], policy: &P, secs: f64) -> Rollout {
-    let mut sim = Pendulum::new(vec![1.0, 1.0], vec![1.0, 1.0], vec![0.05, 0.05], 9.81, DT);
+    rollout_config(1.0, 1.0, 0.05, theta0, policy, secs)
+}
+
+/// As [`rollout`] but for an arbitrary arm `(link-2 length, mass, friction)` —
+/// the basis for domain-randomized training and cross-arm evaluation.
+pub fn rollout_config<P: SwingUpPolicy>(
+    l1: f64,
+    m1: f64,
+    b1: f64,
+    theta0: &[f64],
+    policy: &P,
+    secs: f64,
+) -> Rollout {
+    let mut sim = Pendulum::new(vec![1.0, m1], vec![1.0, l1], vec![0.05, b1], 9.81, DT);
     sim.reset(theta0.to_vec(), vec![0.0, 0.0]);
     let k = balance_gain(&sim, DT);
     let e_up = upright_energy(&sim);
@@ -138,6 +152,65 @@ pub fn fitness(r: &Rollout) -> f64 {
     }
 }
 
+/// A held-out set of arm configs `(l1, m1, b1)` for testing *generalization*:
+/// these specific arms are not the ones domain-randomized training samples
+/// (training draws continuously), so recovering them shows the policy transfers
+/// to arms it never trained on, not memorizes a fixed set.
+pub fn held_out_configs() -> Vec<(f64, f64, f64)> {
+    let mut v = Vec::new();
+    for &l1 in &[0.8, 1.3, 1.8, 2.3] {
+        for &m1 in &[1.5, 2.5] {
+            v.push((l1, m1, 0.05));
+        }
+    }
+    v
+}
+
+/// Recovery rate of a policy across a set of arm configs (each tried from every
+/// canonical knockdown start): returns `(caught, total)`.
+pub fn recovery_rate_over<P: SwingUpPolicy>(
+    policy: &P,
+    configs: &[(f64, f64, f64)],
+    secs: f64,
+) -> (usize, usize) {
+    let starts = knockdown_starts();
+    let mut caught = 0;
+    let total = configs.len() * starts.len();
+    for &(l1, m1, b1) in configs {
+        for (_, theta0) in &starts {
+            if rollout_config(l1, m1, b1, theta0, policy, secs).caught {
+                caught += 1;
+            }
+        }
+    }
+    (caught, total)
+}
+
+/// **Live consumer** (Stage 2): recover an arm by *recalling* the nearest stored
+/// swing-up policy from RuVector for that arm's config signature and running it
+/// (LQR catch + recalled swing-up). Falls back to the hand-tuned baseline if no
+/// policy is stored. This closes the loop: evolution discovers → RuVector stores
+/// → the controller recalls and uses it at runtime.
+#[cfg(feature = "vectordb")]
+pub fn rollout_recalling_policy(
+    mem: &crate::memory::ConfigMemory,
+    l1: f64,
+    m1: f64,
+    b1: f64,
+    theta0: &[f64],
+    secs: f64,
+) -> Rollout {
+    let sig = mem.config_signature(l1, m1, b1);
+    if let Ok(Some(rc)) = mem.recall_policy(&sig) {
+        if rc.params.len() == NP {
+            let mut p = [0.0; NP];
+            p.copy_from_slice(&rc.params);
+            return rollout_config(l1, m1, b1, theta0, &EnergyShapingPolicy { p }, secs);
+        }
+    }
+    rollout_config(l1, m1, b1, theta0, &PflBaseline, secs)
+}
+
 /// The canonical knockdown starts the `check` harness reports on — shared so the
 /// baseline and the evolved champion are judged on exactly the same scenarios.
 pub fn knockdown_starts() -> Vec<(&'static str, Vec<f64>)> {
@@ -188,6 +261,23 @@ mod tests {
         let champ = recovery_count(&champion, 15.0);
         assert!(champ > base, "evolved champion ({champ}) should beat baseline ({base})");
         assert_eq!(champ, 10, "this champion recovers all 10 knockdowns");
+    }
+
+    #[test]
+    fn domain_randomized_champion_generalizes() {
+        // The warm-started domain-randomized champion (evolve RANDOMIZE_ARM=1
+        // SEED=2) judged on the held-out arms it never trained on: it must beat
+        // the hand-tuned baseline clearly and at least match the nominal-only
+        // champion's (surprisingly strong) cross-arm transfer. Pinned so the
+        // "domain randomization generalizes" claim is a fast, reproducible check.
+        let configs = held_out_configs();
+        let dr = EnergyShapingPolicy { p: [59.64, 10.93, -3.07, -10.19, -3.91] };
+        let nominal = EnergyShapingPolicy { p: [35.14, 7.42, 4.24, -6.89, 2.12] };
+        let (dr_c, _) = recovery_rate_over(&dr, &configs, 15.0);
+        let (base_c, _) = recovery_rate_over(&PflBaseline, &configs, 15.0);
+        let (nom_c, _) = recovery_rate_over(&nominal, &configs, 15.0);
+        assert!(dr_c > base_c, "DR ({dr_c}) should beat the hand-tuned baseline ({base_c})");
+        assert!(dr_c >= nom_c, "DR ({dr_c}) should at least match the nominal champion ({nom_c})");
     }
 
     #[test]

@@ -115,8 +115,12 @@ This is what makes "hundreds competing" more than N independent searches:
    under `--features vectordb`. Tests: `recalled_learned_policy_beats_baseline`,
    `recall_policy_picks_nearest`. **Remaining:** wire `recover_torque` to *adopt*
    a recalled policy at runtime (the live consumer) — folds into step 5.
-5. **Domain randomization + generalization test.** Evolve over randomized arms;
-   assert the single evolved policy recovers across a held-out set of configs.
+5. **Domain randomization + generalization test.** ✅ *Done (marginal):*
+   `evolve RANDOMIZE_ARM=1` evolves over randomized arms; held-out eval shows the
+   DR champion edges the nominal champion (29/80 vs 27/80, baseline 19/80) but
+   only with warm-start + best seed — see [`learning-roadmap.md`](learning-roadmap.md)
+   Stage 2. Live consumer (`rollout_recalling_policy`) closes step 4's runtime gap.
+   Test: `domain_randomized_champion_generalizes`.
 6. **(Optional) Game payoff.** Surface "the RuVector arm is *learning*" — e.g.
    the auto arm visibly improves across rounds, or loads an evolved policy.
 

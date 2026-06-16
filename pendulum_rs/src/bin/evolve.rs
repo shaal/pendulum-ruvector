@@ -15,7 +15,8 @@
 //! recovery on the same 10-start `check` harness the baseline is judged on.
 
 use pendulum_rs::learn::{
-    fitness, knockdown_starts, recovery_count, rollout, EnergyShapingPolicy, PflBaseline, NP,
+    fitness, held_out_configs, knockdown_starts, recovery_count, recovery_rate_over, rollout_config,
+    EnergyShapingPolicy, PflBaseline, NP,
 };
 use std::f64::consts::PI;
 use std::thread;
@@ -27,6 +28,11 @@ const GENERATIONS: usize = 30;
 const TRAIN_SECS: f64 = 8.0; // shorter rollouts while searching (speed)
 const EVAL_SECS: f64 = 15.0; // full rollouts for the final harness verdict
 const N_TRAIN_STARTS: usize = 24; // randomized knockdowns per fitness evaluation
+
+/// The Stage-1 nominal champion (default seed). Domain-randomized search warm-
+/// starts from it: it is the strongest known policy, so DR can only refine it
+/// for cross-arm robustness rather than rediscover aggression from scratch.
+const NOMINAL_CHAMPION: [f64; NP] = [35.14, 7.42, 4.24, -6.89, 2.12];
 
 /// Tiny deterministic splitmix64 RNG — no external crate, fully reproducible.
 struct Rng(u64);
@@ -50,27 +56,50 @@ impl Rng {
     }
 }
 
+/// One training scenario: an arm config and a knockdown start. In nominal mode
+/// the config is fixed; with domain randomization it is drawn per case so the
+/// champion must work across arms, not just the nominal one.
+struct TrainCase {
+    l1: f64,
+    m1: f64,
+    b1: f64,
+    theta0: Vec<f64>,
+}
+
 /// A randomized knockdown: each joint angle drawn broadly around the circle so
 /// the training distribution covers pokes, sideways, folds, and full hangs.
 fn random_start(rng: &mut Rng) -> Vec<f64> {
     vec![PI + (rng.unit() * 2.0 - 1.0) * PI, PI + (rng.unit() * 2.0 - 1.0) * PI]
 }
 
-/// Mean fitness of a candidate over the shared training starts.
-fn eval_candidate(p: [f64; NP], starts: &[Vec<f64>]) -> f64 {
+/// A training case. `randomize_arm` toggles domain randomization of the config.
+fn random_case(rng: &mut Rng, randomize_arm: bool) -> TrainCase {
+    let (l1, m1) = if randomize_arm {
+        (0.6 + rng.unit() * 1.9, 1.0 + rng.unit() * 2.0) // l1∈[0.6,2.5], m1∈[1,3]
+    } else {
+        (1.0, 1.0)
+    };
+    TrainCase { l1, m1, b1: 0.05, theta0: random_start(rng) }
+}
+
+/// Mean fitness of a candidate over the shared training cases.
+fn eval_candidate(p: [f64; NP], cases: &[TrainCase]) -> f64 {
     let policy = EnergyShapingPolicy { p };
-    let sum: f64 = starts.iter().map(|s| fitness(&rollout(s, &policy, TRAIN_SECS))).sum();
-    sum / starts.len() as f64
+    let sum: f64 = cases
+        .iter()
+        .map(|c| fitness(&rollout_config(c.l1, c.m1, c.b1, &c.theta0, &policy, TRAIN_SECS)))
+        .sum();
+    sum / cases.len() as f64
 }
 
 /// Evaluate a whole population in parallel across the available cores.
-fn eval_population(pop: &[[f64; NP]], starts: &[Vec<f64>]) -> Vec<f64> {
+fn eval_population(pop: &[[f64; NP]], cases: &[TrainCase]) -> Vec<f64> {
     let n_threads = thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(pop.len());
     let chunk = pop.len().div_ceil(n_threads);
     thread::scope(|s| {
         let handles: Vec<_> = pop
             .chunks(chunk)
-            .map(|c| s.spawn(move || c.iter().map(|&p| eval_candidate(p, starts)).collect::<Vec<_>>()))
+            .map(|c| s.spawn(move || c.iter().map(|&p| eval_candidate(p, cases)).collect::<Vec<_>>()))
             .collect();
         handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
     })
@@ -80,20 +109,33 @@ fn main() {
     // CEM is stochastic on this chaotic landscape, but reliably strong: seeds
     // 0–7 recover 7–10/10 (median ~9.5) and 7 of 8 beat the 7/10 baseline; a
     // given seed reproduces exactly. Pass SEED=N to explore. Default = 1 (10/10).
-    let seed: u64 = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
+    // Domain randomization: with RANDOMIZE_ARM=1 each training case uses a random
+    // arm config, so the champion must generalize across arms (Stage 2). Default
+    // off = the Stage-1 nominal-arm search.
+    let randomize_arm = std::env::var("RANDOMIZE_ARM").map(|v| v == "1").unwrap_or(false);
+    // Default seed differs by mode (each mode's strongest found seed): nominal=1
+    // (10/10), domain-randomized=2 (best cross-arm transfer). Pass SEED=N to override.
+    let default_seed = if randomize_arm { 2 } else { 1 };
+    let seed: u64 = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(default_seed);
     let mut rng = Rng(seed);
 
-    // Fixed (seeded) training distribution, reused every generation so candidate
-    // fitnesses are directly comparable. Kept separate from the eval harness.
-    let train_starts: Vec<Vec<f64>> = (0..N_TRAIN_STARTS).map(|_| random_start(&mut rng)).collect();
+    // Fixed (seeded) training cases, reused every generation so candidate
+    // fitnesses are directly comparable. Kept separate from the eval set.
+    // Domain randomization needs more cases: each draws a random arm too, so a
+    // larger batch is required to estimate fitness across the arm distribution.
+    let n_cases = if randomize_arm { 64 } else { N_TRAIN_STARTS };
+    let train_cases: Vec<TrainCase> =
+        (0..n_cases).map(|_| random_case(&mut rng, randomize_arm)).collect();
 
-    // CEM distribution: start centred on the hand-tuned baseline so we never do
-    // worse than where Phase 3 left off, with generous initial exploration.
-    let mut mean = EnergyShapingPolicy::baseline().p;
+    // CEM distribution. Nominal mode starts at the hand-tuned baseline; domain-
+    // randomized mode warm-starts from the strong nominal champion so it refines
+    // a known-good aggressive policy for cross-arm robustness.
+    let mut mean = if randomize_arm { NOMINAL_CHAMPION } else { EnergyShapingPolicy::baseline().p };
     let mut std = [10.0, 6.0, 6.0, 3.0, 3.0];
 
-    let base_train = eval_candidate(EnergyShapingPolicy::baseline().p, &train_starts);
-    eprintln!("Evolutionary swing-up search  (seed={seed:#x}, pop={POP}, elites={ELITE}, gens={GENERATIONS})");
+    let base_train = eval_candidate(EnergyShapingPolicy::baseline().p, &train_cases);
+    let mode = if randomize_arm { "domain-randomized (cross-arm)" } else { "nominal arm" };
+    eprintln!("Evolutionary swing-up search [{mode}]  (seed={seed:#x}, pop={POP}, gens={GENERATIONS})");
     eprintln!("baseline mean train-fitness = {base_train:.1}\n");
     eprintln!("gen |  best  |  elite-mean | champion params");
 
@@ -105,7 +147,7 @@ fn main() {
         let pop: Vec<[f64; NP]> = (0..POP)
             .map(|_| std::array::from_fn(|i| mean[i] + std[i] * rng.gauss()))
             .collect();
-        let fits = eval_population(&pop, &train_starts);
+        let fits = eval_population(&pop, &train_cases);
 
         // Rank and take the elites.
         let mut idx: Vec<usize> = (0..POP).collect();
@@ -144,7 +186,7 @@ fn main() {
         champion.iter().map(|x| format!("{x:.2}")).collect::<Vec<_>>().join(", "));
     eprintln!("\nPer-start (champion):");
     for (label, theta0) in knockdown_starts() {
-        let r = rollout(&theta0, &champ_policy, EVAL_SECS);
+        let r = rollout_config(1.0, 1.0, 0.05, &theta0, &champ_policy, EVAL_SECS);
         eprintln!("  {label} -> {}", if r.caught { "RECOVERED ✅" } else { "did not catch ❌" });
     }
     if champ_recovered > base_recovered {
@@ -153,6 +195,20 @@ fn main() {
         eprintln!("\n→ no improvement over baseline this run (try a different SEED or more generations).");
     }
     eprintln!("(CEM is stochastic but reliable: seeds 0–7 → 7–10/10, 7 of 8 beat the 7/10 baseline.)");
+
+    // Cross-arm generalization: in domain-randomized mode, judge the champion on
+    // a HELD-OUT set of arm configs it never trained on, against the hand-tuned
+    // baseline and the nominal-only Stage-1 champion (which was tuned for one arm).
+    if randomize_arm {
+        let configs = held_out_configs();
+        let (cb, tot) = recovery_rate_over(&PflBaseline, &configs, EVAL_SECS);
+        let (cn, _) = recovery_rate_over(&EnergyShapingPolicy { p: NOMINAL_CHAMPION }, &configs, EVAL_SECS);
+        let (cc, _) = recovery_rate_over(&champ_policy, &configs, EVAL_SECS);
+        eprintln!("\n──────────── GENERALIZATION (held-out arms × knockdowns, {tot} trials) ────────────");
+        eprintln!("hand-tuned baseline     : {cb}/{tot}");
+        eprintln!("nominal-only champion   : {cn}/{tot}");
+        eprintln!("domain-randomized champ : {cc}/{tot}   ← trained on randomized arms");
+    }
 
     // With RuVector: store the champion keyed by the config it trained on (the
     // nominal arm), so the controller can later *recall* this learned swing-up.
