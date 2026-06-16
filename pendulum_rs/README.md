@@ -4,7 +4,7 @@
 
 *A triple pendulum simulated by this crate. The same run inserted 108 state
 vectors into a RuVector HNSW store and ran GNN message-passing over the link
-graph — all in one Rust process. (GIF rendered from the sim's `--csv` dump.)*
+graph — all in one Rust process.*
 
 A **Rust-native** n-link pendulum: hand-derived Lagrangian dynamics → live
 **Rerun** visualization, with an optional **in-process RuVector** loop
