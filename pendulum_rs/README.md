@@ -18,7 +18,29 @@ Stack (matches the standard Rust robotics recommendation): custom dynamics +
 DB) and `ruvector-gnn` (graph attention layer) linked as path dependencies into
 the `../RuVector` submodule.
 
-## Build & run
+## Underactuated arm balance (`arm` binary) — the main demo
+
+A 2-link arm with **only joint 0 motorized** balances straight up (an unstable
+equilibrium) using an LQR computed in-Rust. Two arms run side by side; partway
+through, the second link **changes length** on both:
+
+```bash
+cargo run --release --bin arm -- --duration 8 --newlen 2.0 --out arm.rrd
+rerun arm.rrd
+```
+
+- **naive** arm keeps its old gain → topples.
+- **adaptive** arm recomputes its balance gain for the new arm → stays upright.
+
+This is the control core for the RuVector calibration story: the balance gain is
+derived from the arm's mass/length model, so when the model changes the gain
+must change too. In Phase 1 the adaptive arm is told the new length by an oracle;
+**Phase 2 replaces that oracle with RuVector** estimating the change from motion.
+
+`cargo run --bin check` is a diagnostic that sweeps configurations to find which
+ones are stabilizable and where adaptation actually decides survival.
+
+## Build & run (the logging/visualization demo)
 
 The base build is self-contained (just the Rerun SDK):
 
