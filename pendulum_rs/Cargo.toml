@@ -49,5 +49,10 @@ name = "estimate"
 path = "src/bin/estimate.rs"
 required-features = ["vectordb"]
 
+# Stage 1: evolutionary swing-up search (no extra features needed).
+[[bin]]
+name = "evolve"
+path = "src/bin/evolve.rs"
+
 [profile.release]
 opt-level = 2

@@ -2,27 +2,12 @@
 //! big are the gains? Helps pick a demonstrable adaptive scenario instead of
 //! guessing. Not part of the demo — a control-tuning aid.
 
-use pendulum_rs::control::{balance_gain, recover_torque, upright_energy};
+use pendulum_rs::control::balance_gain;
 use pendulum_rs::simulator::Pendulum;
 use std::f64::consts::PI;
 
 const DT: f64 = 0.005;
 const U_MAX: f64 = 150.0;
-
-/// Can the always-on recover controller (swing-up + LQR catch) get the arm back
-/// to upright from a knocked-down start within `secs`? Returns final tip error.
-fn recovery_test(theta0: Vec<f64>, secs: f64) -> f64 {
-    let mut sim = Pendulum::new(vec![1.0, 1.0], vec![1.0, 1.0], vec![0.05, 0.05], 9.81, DT);
-    sim.reset(theta0, vec![0.0, 0.0]);
-    let k = balance_gain(&sim, DT);
-    let _e_up = upright_energy(&sim);
-    let wrap = |a: f64| (a + PI).rem_euclid(2.0 * PI) - PI;
-    for _ in 0..(secs / DT) as usize {
-        let u = recover_torque(&sim, &k, _e_up, U_MAX);
-        sim.step(&[u, 0.0]);
-    }
-    wrap(sim.theta[0] - PI).abs() + wrap(sim.theta[1] - PI).abs()
-}
 
 fn settle_error(m1: f64, l1: f64, gain_from: Option<(f64, f64)>) -> (f64, f64) {
     // Build the *true* arm.
@@ -76,29 +61,20 @@ fn main() {
         );
     }
 
+    // Recovery harness — shared with the `evolve` search via `learn` so the
+    // hand-tuned baseline and the evolved champion are judged identically.
     println!("\nRecovery (collocated-PFL swing-up + LQR catch) from knocked-down starts, 15s:");
-    let starts = [
-        ("small poke    ", vec![PI - 0.5, PI + 0.4]),
-        ("big poke      ", vec![PI - 1.2, PI + 0.9]),
-        ("sideways      ", vec![PI - 1.8, PI + 1.5]),
-        ("hard sideways ", vec![PI - 2.4, PI + 0.6]),
-        ("link-2 folded ", vec![PI - 0.3, PI + 2.2]),
-        ("both folded   ", vec![PI - 1.5, PI - 1.5]),
-        ("half down     ", vec![PI / 2.0, PI / 2.0]),
-        ("hanging down  ", vec![0.1, -0.1]),
-        ("hang + twist  ", vec![0.2, PI - 0.3]),
-        ("near top fast ", vec![PI - 0.8, PI + 0.8]),
-    ];
+    let starts = pendulum_rs::learn::knockdown_starts();
     let mut recovered = 0;
     for (label, theta0) in &starts {
-        let final_err = recovery_test(theta0.clone(), 15.0);
-        let ok = if final_err < 0.2 {
+        let r = pendulum_rs::learn::rollout(theta0, &pendulum_rs::learn::PflBaseline, 15.0);
+        let ok = if r.caught {
             recovered += 1;
             "RECOVERED ✅"
         } else {
             "did not catch ❌"
         };
-        println!("  {label} -> final tip error {:.2} rad  {}", final_err, ok);
+        println!("  {label} -> final tip error {:.2} rad  {}", r.final_tip, ok);
     }
     println!("\n  recovered {recovered}/{} knockdown starts", starts.len());
 }

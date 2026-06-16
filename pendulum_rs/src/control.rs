@@ -239,20 +239,32 @@ pub fn swingup_torque(sim: &Pendulum, e_up: f64, u_max: f64) -> f64 {
 /// Adding posture/damping terms to `v` was found to *fight* the pump and is
 /// omitted. Returns the clamped joint-0 torque.
 pub fn swingup_pfl(sim: &Pendulum, e_up: f64, u_max: f64) -> f64 {
-    let (m, bias) = sim.manipulator_terms(&sim.theta, &sim.omega);
-    // Guard the inversion of the passive-joint inertia.
-    let m11 = if m[1][1].abs() < 1e-9 { 1e-9 } else { m[1][1] };
-    // Collocated inertia and bias: u = M̄·q̈₀ + h̄ realizes the commanded q̈₀ = v.
-    let m_bar = m[0][0] - m[0][1] * m[1][0] / m11;
-    let h_bar = bias[0] - m[0][1] * bias[1] / m11;
-
+    let (m_bar, h_bar) = collocated_pfl(sim);
     // Aggressive pumping (the q̈₀ command saturates the motor most of the swing,
     // i.e. near-bang-bang energy injection) recovers the most knockdowns on the
     // `check` harness; gentler gains stall in low-energy limit cycles.
     let k_e = 20.0;
     let v = k_e * (e_up - sim.total_energy()) * sim.omega[0];
-
     (m_bar * v + h_bar).clamp(-u_max, u_max)
+}
+
+/// Collocated partial-feedback-linearization terms `(M̄, h̄)` at the current
+/// state, such that the joint-0 torque `u = M̄·v + h̄` realizes the commanded
+/// actuated acceleration `q̈₀ = v` (the passive joint follows). Shared by the
+/// hand-tuned [`swingup_pfl`] and the learnable energy-shaping policies — they
+/// differ only in how they choose `v`.
+pub fn collocated_pfl(sim: &Pendulum) -> (f64, f64) {
+    let (m, bias) = sim.manipulator_terms(&sim.theta, &sim.omega);
+    // Guard the inversion of the passive-joint inertia.
+    let m11 = if m[1][1].abs() < 1e-9 { 1e-9 } else { m[1][1] };
+    let m_bar = m[0][0] - m[0][1] * m[1][0] / m11;
+    let h_bar = bias[0] - m[0][1] * bias[1] / m11;
+    (m_bar, h_bar)
+}
+
+/// Wrap an angle to `(-π, π]`. Public so policies can compute posture error.
+pub fn wrap_angle(a: f64) -> f64 {
+    (a + PI).rem_euclid(2.0 * PI) - PI
 }
 
 /// Always-on recovery controller: balance with LQR when close to upright,

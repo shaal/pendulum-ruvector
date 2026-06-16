@@ -1,7 +1,11 @@
 # Plan — Evolutionary swing-up search (Stage 1 of the learning roadmap)
 
-> Status: **planned**. This doc is written so a future session can resume cold.
-> Use the **ship-task** skill when implementing this (the user asked for it).
+> Status: **core shipped** (steps 1–3 below). The `SwingUpPolicy` trait +
+> rollout/fitness live in `learn.rs`; the `evolve` binary runs a seeded parallel
+> cross-entropy search; the champion beats the hand-tuned baseline (7/10 → 10/10
+> at the default seed, 6–10/10 across seeds). **Remaining: steps 4–6** (store
+> winners in RuVector, domain-randomize for cross-arm generalization, game
+> payoff). Use the **ship-task** skill when continuing.
 
 ## Goal
 

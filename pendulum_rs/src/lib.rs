@@ -10,6 +10,7 @@
 
 pub mod control;
 pub mod estimator;
+pub mod learn;
 pub mod simulator;
 
 #[cfg(feature = "vectordb")]
