@@ -179,16 +179,21 @@ cargo run --release --bin evolve                     # nominal-arm search (Stage
 RANDOMIZE_ARM=1 cargo run --release --bin evolve     # cross-arm search (Stage 2)
 ```
 
-**Honest result.** On a held-out set of arms it never trained on (80 arm×knockdown
-trials), the domain-randomized champion recovers **29/80**, edging the nominal-only
-champion's **27/80** and clearly beating the hand-tuned baseline's **19/80**. But
-the win over the nominal champion is *marginal and fragile*: it needed warm-starting
-the search from the nominal champion and the best of several seeds (cold-start DR
-*loses*, 19–24/80). The deeper finding is real — a well-tuned nominal champion
-transfers surprisingly well, and these heavy/long arms are hard for *every* policy
-(24–36% recovery). Test `domain_randomized_champion_generalizes` pins it.
-Strengthening this (curriculum, fitness reweighting) is future work in
-[`../docs/plans/`](../docs/plans/).
+**Honest result — and why one policy can't win.** On a held-out set of arms it
+never trained on (80 arm×knockdown trials), the domain-randomized champion
+recovers **28/80**, edging the nominal-only champion's **27/80** and clearly
+beating the baseline's **19/80**. A closest-approach fitness (`Rollout.min_tip` —
+reward swinging *nearer* upright even on a miss) made DR markedly more
+consistent across seeds (25–28 vs an earlier 19–24). But the edge over the
+nominal champion stays marginal — for a structural reason the report makes plain:
+the **union ceiling, what *any* of {baseline, nominal, DR} recovers, is 42/80**,
+far above any single policy. No one universal controller generalizes decisively;
+different arms are rescued by different policies. **The path to the ceiling is
+per-arm policy *recall* (the RuVector store above), not one domain-randomized
+policy.** (Side-finding: *short* links are the hard case — less leverage to pump
+energy.) `evolve RANDOMIZE_ARM=1` prints the per-policy, per-link-length, and
+ceiling breakdown. Tests: `domain_randomized_champion_generalizes`,
+`policy_union_exceeds_any_single`. Next steps in [`../docs/plans/`](../docs/plans/).
 
 ## Build & run (the logging/visualization demo)
 

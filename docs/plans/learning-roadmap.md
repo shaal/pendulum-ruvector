@@ -36,6 +36,21 @@ fitness + `evolve` binary; champion beats baseline (7/10 → 10/10 default seed,
 6–10 across seeds). **Remaining:** store winners in RuVector, domain
 randomization (→ Stage 2), game payoff. Use ship-task.
 
+### Stage 2.5 — Why one policy can't win, and what to do instead *(shipped)*
+Tried to make domain randomization *decisively* beat the nominal champion.
+**Finding: it can't — structurally.** Closest-approach fitness shaping
+(`Rollout.min_tip`, reward the nearest swing to upright even on misses) made DR
+*more consistent* (25–28/80 across seeds vs the old 19–24), and the best DR
+champion edges nominal (28 vs 27/80). But the **union ceiling — what *any* of
+{baseline, nominal, DR} recovers — is 42/80**, far above any single policy. No
+one universal controller generalizes decisively; different arms favour different
+policies. **So the path to the ceiling is per-arm policy *recall* (Stage 1.4),
+not one domain-randomized policy.** Side-finding: *short* links are the hard case
+(less leverage to pump energy), not long/heavy ones. Tests:
+`policy_union_exceeds_any_single`, `domain_randomized_champion_generalizes`.
+**Next:** evolve a *library* of per-config champions, store each in RuVector, and
+recover by recalling the best per arm — measure how close that gets to 42/80.
+
 ### Stage 2 — Generalization via domain randomization *(shipped; marginal win)*
 Evolve a *single* policy over randomized arm configs so it recovers across arms
 it never saw. **Done:** `rollout_config` (any arm), `evolve RANDOMIZE_ARM=1`,
