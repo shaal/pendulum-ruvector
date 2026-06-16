@@ -7,4 +7,8 @@ phase2_configs.db
 phase2_configs.db/
 play_configs.db
 play_configs.db/
+evolve_policies.db
+evolve_policies.db/
+# RuVector policy-store siblings (memory.rs derives "<db>.policies").
+*.policies
 /rust_triple_pendulum.gif

@@ -109,9 +109,12 @@ This is what makes "hundreds competing" more than N independent searches:
    per generation and the final recovery count on the fixed `check` harness.
 3. **Beat the baseline.** Target > 7/10 on the harness; report honestly. Plot/log
    the learning curve (fitness vs generation) — that curve is the deliverable.
-4. **Store winners in RuVector** keyed by config signature; add a recall path so
-   `recover_torque` can adopt a learned policy. Test: a recalled learned policy
-   stabilizes an arm the hand-tuned one fails on.
+4. **Store winners in RuVector** keyed by config signature. ✅ *Done:*
+   `ConfigMemory::insert_policy`/`recall_policy` (a second `VectorDB` keyed by the
+   closed-loop signature, opaque `Vec<f64>` params); `evolve` stores its champion
+   under `--features vectordb`. Tests: `recalled_learned_policy_beats_baseline`,
+   `recall_policy_picks_nearest`. **Remaining:** wire `recover_torque` to *adopt*
+   a recalled policy at runtime (the live consumer) — folds into step 5.
 5. **Domain randomization + generalization test.** Evolve over randomized arms;
    assert the single evolved policy recovers across a held-out set of configs.
 6. **(Optional) Game payoff.** Surface "the RuVector arm is *learning*" — e.g.

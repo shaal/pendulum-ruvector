@@ -43,10 +43,28 @@ const SEED_DT: f64 = 0.005;
 /// RuVector-backed memory of arm configurations.
 pub struct ConfigMemory {
     db: VectorDB,
+    /// Second index, keyed by the *same* config signature, holding learned
+    /// swing-up policies (opaque parameter vectors). Lets the controller recall
+    /// not just the balance gain but the swing-up controller evolution found.
+    policy_db: VectorDB,
     /// Per-dimension whitening statistics, learned from the seed grid.
     mean: Signature,
     std: Signature,
     next_id: usize,
+    policy_next_id: usize,
+}
+
+/// A learned swing-up policy recalled from RuVector for a config signature.
+#[derive(Debug, Clone)]
+pub struct RecalledPolicy {
+    pub id: String,
+    /// Whitened-L2 distance to the query.
+    pub score: f32,
+    /// The opaque policy parameters (interpreted by `learn::EnergyShapingPolicy`).
+    pub params: Vec<f64>,
+    pub l1: f64,
+    pub m1: f64,
+    pub b1: f64,
 }
 
 impl ConfigMemory {
@@ -63,11 +81,20 @@ impl ConfigMemory {
             storage_path: storage_path.to_string(),
             ..Default::default()
         };
+        // The policy index lives alongside the config index at a derived path.
+        let policy_path = format!("{storage_path}.policies");
+        let _ = std::fs::remove_file(&policy_path);
+        let policy_opts = DbOptions {
+            storage_path: policy_path,
+            ..opts.clone()
+        };
         Ok(Self {
             db: VectorDB::new(opts)?,
+            policy_db: VectorDB::new(policy_opts)?,
             mean: [0.0; SIG_DIM],
             std: [1.0; SIG_DIM],
             next_id: 0,
+            policy_next_id: 0,
         })
     }
 
@@ -149,6 +176,12 @@ impl ConfigMemory {
     /// or the measured closed-loop signature won't live in the seeded space.
     pub fn probe_gain(&self) -> Vec4 {
         nominal_probe_gain(SEED_DT)
+    }
+
+    /// The closed-loop signature of a `(l1, m1, b1)` config under the shared
+    /// probe gain — the key both the gain store and the policy store use.
+    pub fn config_signature(&self, l1: f64, m1: f64, b1: f64) -> Signature {
+        closed_loop_signature(&Self::arm(l1, m1, b1), &self.probe_gain())
     }
 
     /// Whiten a raw signature into the embedding actually stored / queried.
@@ -236,6 +269,63 @@ impl ConfigMemory {
             k: k_arr,
             e_up: getf("e_up"),
             learned,
+        }))
+    }
+
+    /// Store a learned swing-up policy keyed by a config signature. `params` is
+    /// opaque (the caller — `learn` — knows its layout). Requires `seed_grid`
+    /// to have run first, so the shared whitening is in place.
+    pub fn insert_policy(
+        &mut self,
+        sig: &Signature,
+        params: &[f64],
+        l1: f64,
+        m1: f64,
+        b1: f64,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let id = format!("pol{}", self.policy_next_id);
+        self.policy_next_id += 1;
+        let mut md = HashMap::new();
+        md.insert("params".to_string(), serde_json::json!(params));
+        md.insert("l1".to_string(), serde_json::json!(l1));
+        md.insert("m1".to_string(), serde_json::json!(m1));
+        md.insert("b1".to_string(), serde_json::json!(b1));
+        self.policy_db.insert(VectorEntry {
+            id: Some(id.clone()),
+            vector: self.whiten(sig),
+            metadata: Some(md),
+        })?;
+        Ok(id)
+    }
+
+    /// Recall the nearest stored swing-up policy to a config signature.
+    pub fn recall_policy(
+        &self,
+        sig: &Signature,
+    ) -> Result<Option<RecalledPolicy>, Box<dyn std::error::Error>> {
+        let results = self.policy_db.search(SearchQuery {
+            vector: self.whiten(sig),
+            k: 1,
+            filter: None,
+            ef_search: None,
+        })?;
+        let Some(top) = results.into_iter().next() else {
+            return Ok(None);
+        };
+        let md = top.metadata.unwrap_or_default();
+        let getf = |key: &str| md.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let params = md
+            .get("params")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_f64()).collect::<Vec<f64>>())
+            .unwrap_or_default();
+        Ok(Some(RecalledPolicy {
+            id: top.id,
+            score: top.score,
+            params,
+            l1: getf("l1"),
+            m1: getf("m1"),
+            b1: getf("b1"),
         }))
     }
 
