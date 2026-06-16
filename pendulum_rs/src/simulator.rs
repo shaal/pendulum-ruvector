@@ -22,6 +22,8 @@ pub struct Pendulum {
     pub b: Vec<f64>,
     pub g: f64,
     pub dt: f64,
+    /// Constant horizontal wind force applied at the tip [N]. 0 = no wind.
+    pub wind: f64,
     /// `mu[i][j] = sum_{k >= max(i,j)} m_k` — constant tail-mass coupling.
     mu: Vec<Vec<f64>>,
     /// `cum_tail[i] = sum_{k >= i} m_k`.
@@ -59,6 +61,7 @@ impl Pendulum {
             b: damping,
             g: gravity,
             dt,
+            wind: 0.0,
             mu,
             cum_tail,
             theta: vec![0.0; n],
@@ -75,8 +78,43 @@ impl Pendulum {
         self.t = 0.0;
     }
 
+    /// Change a link's mass (e.g. picking up / dropping a payload) and refresh
+    /// the inertia coupling so the dynamics reflect it immediately.
+    pub fn set_mass(&mut self, i: usize, mass: f64) {
+        self.m[i] = mass;
+        self.recompute_coupling();
+    }
+
+    /// Change a link's length (a structural change) and refresh the coupling.
+    pub fn set_length(&mut self, i: usize, length: f64) {
+        self.l[i] = length;
+        self.recompute_coupling();
+    }
+
+    /// Set per-joint viscous damping (e.g. friction increase / motor wear).
+    pub fn set_damping(&mut self, i: usize, damping: f64) {
+        self.b[i] = damping;
+    }
+
+    /// Rebuild the tail-mass coupling matrix after masses/lengths change.
+    fn recompute_coupling(&mut self) {
+        let n = self.n;
+        let mut cum_tail = vec![0.0; n];
+        let mut acc = 0.0;
+        for i in (0..n).rev() {
+            acc += self.m[i];
+            cum_tail[i] = acc;
+        }
+        for i in 0..n {
+            for j in 0..n {
+                self.mu[i][j] = cum_tail[i.max(j)];
+            }
+        }
+        self.cum_tail = cum_tail;
+    }
+
     /// Solve `M * x = rhs` for the angular accelerations.
-    fn angular_acceleration(&self, theta: &[f64], omega: &[f64], tau: &[f64]) -> Vec<f64> {
+    pub fn angular_acceleration(&self, theta: &[f64], omega: &[f64], tau: &[f64]) -> Vec<f64> {
         let n = self.n;
         let mut m_mat = vec![vec![0.0; n]; n];
         let mut rhs = vec![0.0; n];
@@ -101,7 +139,17 @@ impl Pendulum {
         let n = self.n;
         let theta = &y[..n];
         let omega = &y[n..];
-        let acc = self.angular_acceleration(theta, omega, tau);
+        // Wind enters as a generalized joint torque: a horizontal tip force `w`
+        // produces torque w * dx_tip/dθ_i = w * l_i * cos(θ_i) at each joint.
+        // We fold it into the effective torque so the integrator sees it but the
+        // pure `angular_acceleration` (used for linearization) stays wind-free.
+        let mut eff_tau = tau.to_vec();
+        if self.wind != 0.0 {
+            for i in 0..n {
+                eff_tau[i] += self.wind * self.l[i] * theta[i].cos();
+            }
+        }
+        let acc = self.angular_acceleration(theta, omega, &eff_tau);
         let mut out = vec![0.0; 2 * n];
         out[..n].copy_from_slice(omega);
         out[n..].copy_from_slice(&acc);

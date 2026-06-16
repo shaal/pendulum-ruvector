@@ -1,6 +1,6 @@
 target/
 *.rrd
-frames.csv
+*.csv
 pendulum_ruvector.db
 pendulum_ruvector.db/
 /rust_triple_pendulum.gif

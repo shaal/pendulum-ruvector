@@ -11,9 +11,7 @@
 //! By default it writes an `.rrd` recording you open with `rerun pendulum_rs.rrd`.
 //! Pass `--spawn` to launch the viewer live instead.
 
-mod simulator;
-
-use simulator::Pendulum;
+use pendulum_rs::simulator::Pendulum;
 use std::f64::consts::PI;
 use std::io::Write;
 
