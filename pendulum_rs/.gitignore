@@ -12,3 +12,5 @@ evolve_policies.db/
 # RuVector policy-store siblings (memory.rs derives "<db>.policies").
 *.policies
 /rust_triple_pendulum.gif
+evolve_library.db
+evolve_library.db/

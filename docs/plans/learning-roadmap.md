@@ -36,6 +36,22 @@ fitness + `evolve` binary; champion beats baseline (7/10 → 10/10 default seed,
 6–10 across seeds). **Remaining:** store winners in RuVector, domain
 randomization (→ Stage 2), game payoff. Use ship-task.
 
+### Stage 2.6 — Per-arm policy library + recall: a precise decomposition *(shipped)*
+Evolved a champion **per anchor config** (`evolve LIBRARY=1`), stored each in
+RuVector, and recovered held-out arms (between anchors) by recalling the nearest
+champion. **Honest decomposition of the held-out ceiling (80 trials):**
+- best single policy: **28** · per-arm **recall**: **29** · per-arm **oracle**
+  (best policy/arm): **38** · union ceiling (best per arm×knockdown): **42**.
+
+So per-arm *selection* has real headroom (oracle 38 ≫ 28), but signature-keyed
+*recall* captures almost none of it (29) — the arm whose *dynamics* are nearest
+isn't the one whose *champion* transfers best; and 38→42 is per-knockdown
+variation no arm-keyed scheme can reach. **The lever is the recall→policy
+mapping, not more domain randomization.** Test: `per_arm_library_beats_single_policies`.
+**Next (Stage 2.7):** a better recall mapping — e.g. key/store policies by *where
+they perform well* rather than the arm they trained on, or try the k-nearest
+champions and keep the best — to close the 29→38 gap.
+
 ### Stage 2.5 — Why one policy can't win, and what to do instead *(shipped)*
 Tried to make domain randomization *decisively* beat the nominal champion.
 **Finding: it can't — structurally.** Closest-approach fitness shaping

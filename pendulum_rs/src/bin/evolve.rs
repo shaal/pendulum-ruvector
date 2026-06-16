@@ -28,6 +28,7 @@ const GENERATIONS: usize = 30;
 const TRAIN_SECS: f64 = 8.0; // shorter rollouts while searching (speed)
 const EVAL_SECS: f64 = 15.0; // full rollouts for the final harness verdict
 const N_TRAIN_STARTS: usize = 24; // randomized knockdowns per fitness evaluation
+const LIBRARY_GENS: usize = 20; // generations per anchor when building the policy library
 
 // The nominal champion (warm-start point for domain-randomized search) lives in
 // `learn::NOMINAL_CHAMPION` so the bin and the tests share one source of truth.
@@ -103,7 +104,53 @@ fn eval_population(pop: &[[f64; NP]], cases: &[TrainCase]) -> Vec<f64> {
     })
 }
 
+/// Run the cross-entropy search over `cases` and return the best champion found.
+/// Threads the caller's RNG so the full draw sequence (case generation then
+/// population sampling) stays reproducible.
+fn cem(rng: &mut Rng, cases: &[TrainCase], init_mean: [f64; NP], gens: usize, verbose: bool) -> [f64; NP] {
+    let mut mean = init_mean;
+    let mut std = [10.0, 6.0, 6.0, 3.0, 3.0];
+    let mut champion = mean;
+    let mut champion_fit = eval_candidate(init_mean, cases);
+    for gen in 0..gens {
+        let pop: Vec<[f64; NP]> = (0..POP)
+            .map(|_| std::array::from_fn(|i| mean[i] + std[i] * rng.gauss()))
+            .collect();
+        let fits = eval_population(&pop, cases);
+        let mut idx: Vec<usize> = (0..POP).collect();
+        idx.sort_by(|&a, &b| fits[b].partial_cmp(&fits[a]).unwrap());
+        let elites: Vec<[f64; NP]> = idx[..ELITE].iter().map(|&i| pop[i]).collect();
+        for d in 0..NP {
+            let m = elites.iter().map(|e| e[d]).sum::<f64>() / ELITE as f64;
+            let var = elites.iter().map(|e| (e[d] - m).powi(2)).sum::<f64>() / ELITE as f64;
+            mean[d] = m;
+            std[d] = var.sqrt().max(0.5);
+        }
+        if fits[idx[0]] > champion_fit {
+            champion_fit = fits[idx[0]];
+            champion = pop[idx[0]];
+        }
+        if verbose {
+            eprintln!(
+                "{gen:3} | best {:6.1} | mean [{}]",
+                fits[idx[0]],
+                mean.iter().map(|x| format!("{x:.1}")).collect::<Vec<_>>().join(", ")
+            );
+        }
+    }
+    champion
+}
+
 fn main() {
+    // LIBRARY=1 evolves a champion per anchor config, stores them in RuVector,
+    // and evaluates per-arm recall (Stage 2.6). Falls through to the single-
+    // policy search (nominal / domain-randomized) otherwise.
+    #[cfg(feature = "vectordb")]
+    if std::env::var("LIBRARY").map(|v| v == "1").unwrap_or(false) {
+        run_library();
+        return;
+    }
+
     // CEM is stochastic on this chaotic landscape, but reliably strong: seeds
     // 0–7 recover 7–10/10 (median ~9.5) and 7 of 8 beat the 7/10 baseline; a
     // given seed reproduces exactly. Pass SEED=N to explore. Default = 1 (10/10).
@@ -126,11 +173,10 @@ fn main() {
     let train_cases: Vec<TrainCase> =
         (0..n_cases).map(|_| random_case(&mut rng, randomize_arm)).collect();
 
-    // CEM distribution. Nominal mode starts at the hand-tuned baseline; domain-
+    // CEM init mean. Nominal mode starts at the hand-tuned baseline; domain-
     // randomized mode warm-starts from the strong nominal champion so it refines
     // a known-good aggressive policy for cross-arm robustness.
-    let mut mean = if randomize_arm { NOMINAL_CHAMPION } else { EnergyShapingPolicy::baseline().p };
-    let mut std = [10.0, 6.0, 6.0, 3.0, 3.0];
+    let mean = if randomize_arm { NOMINAL_CHAMPION } else { EnergyShapingPolicy::baseline().p };
 
     let base_train = eval_candidate(EnergyShapingPolicy::baseline().p, &train_cases);
     let mode = if randomize_arm { "domain-randomized (cross-arm)" } else { "nominal arm" };
@@ -138,41 +184,7 @@ fn main() {
     eprintln!("baseline mean train-fitness = {base_train:.1}\n");
     eprintln!("gen |  best  |  elite-mean | champion params");
 
-    let mut champion = mean;
-    let mut champion_fit = base_train;
-
-    for gen in 0..GENERATIONS {
-        // Sample the population from the current Gaussian.
-        let pop: Vec<[f64; NP]> = (0..POP)
-            .map(|_| std::array::from_fn(|i| mean[i] + std[i] * rng.gauss()))
-            .collect();
-        let fits = eval_population(&pop, &train_cases);
-
-        // Rank and take the elites.
-        let mut idx: Vec<usize> = (0..POP).collect();
-        idx.sort_by(|&a, &b| fits[b].partial_cmp(&fits[a]).unwrap());
-        let elites: Vec<[f64; NP]> = idx[..ELITE].iter().map(|&i| pop[i]).collect();
-
-        // Refit the Gaussian to the elites (with a small std floor so it keeps
-        // exploring instead of collapsing prematurely).
-        for d in 0..NP {
-            let m = elites.iter().map(|e| e[d]).sum::<f64>() / ELITE as f64;
-            let var = elites.iter().map(|e| (e[d] - m).powi(2)).sum::<f64>() / ELITE as f64;
-            mean[d] = m;
-            std[d] = var.sqrt().max(0.5);
-        }
-
-        let best_fit = fits[idx[0]];
-        let elite_mean_fit = idx[..ELITE].iter().map(|&i| fits[i]).sum::<f64>() / ELITE as f64;
-        if best_fit > champion_fit {
-            champion_fit = best_fit;
-            champion = pop[idx[0]];
-        }
-        eprintln!(
-            "{gen:3} | {best_fit:6.1} | {elite_mean_fit:7.1}     | [{}]",
-            mean.iter().map(|x| format!("{x:.1}")).collect::<Vec<_>>().join(", ")
-        );
-    }
+    let champion = cem(&mut rng, &train_cases, mean, GENERATIONS, true);
 
     // Final honest verdict on the SAME harness the baseline reports on.
     let champ_policy = EnergyShapingPolicy { p: champion };
@@ -259,5 +271,108 @@ fn main() {
             recalled.params.len(),
             recalled.score
         );
+    }
+}
+
+/// Stage 2.6 — evolve a champion per anchor config, store the library in
+/// RuVector, and measure per-arm *recall* recovery against the single-policy
+/// plateau and the union ceiling. Anchors sit on the seed grid; the held-out
+/// eval arms sit *between* them, so recall always returns a champion tuned for a
+/// nearby-but-different arm (a real generalization test, not training-on-test).
+#[cfg(feature = "vectordb")]
+fn run_library() {
+    use pendulum_rs::learn::{
+        held_out_configs, knockdown_starts, recovered_mask, rollout_config, rollout_recalling_policy,
+        EnergyShapingPolicy, PflBaseline, DR_CHAMPION, NOMINAL_CHAMPION,
+    };
+    use pendulum_rs::memory::ConfigMemory;
+
+    let seed: u64 = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
+    let anchors: Vec<(f64, f64, f64)> = [0.6, 1.0, 1.5, 2.0, 2.5]
+        .iter()
+        .flat_map(|&l1| [1.0, 2.0, 3.0].iter().map(move |&m1| (l1, m1, 0.05)))
+        .collect();
+
+    let mut mem = ConfigMemory::new("evolve_library.db").expect("open RuVector store");
+    mem.seed_grid().expect("seed grid (for whitening)");
+
+    eprintln!("Stage 2.6 — evolving a per-arm champion library over {} anchors (gens={LIBRARY_GENS})\n", anchors.len());
+    let mut library: Vec<(f64, f64, f64, [f64; NP])> = Vec::new();
+    for (i, &(l1, m1, b1)) in anchors.iter().enumerate() {
+        let mut rng = Rng(seed + i as u64);
+        let cases: Vec<TrainCase> = (0..N_TRAIN_STARTS)
+            .map(|_| TrainCase { l1, m1, b1, theta0: random_start(&mut rng) })
+            .collect();
+        // Warm-start each anchor from the nominal champion (a strong aggressive base).
+        let champ = cem(&mut rng, &cases, NOMINAL_CHAMPION, LIBRARY_GENS, false);
+        mem.insert_policy(&mem.config_signature(l1, m1, b1), &champ, l1, m1, b1)
+            .expect("store policy");
+        eprintln!(
+            "  anchor l1={l1:.1} m1={m1:.1} -> [{}]",
+            champ.iter().map(|x| format!("{x:.2}")).collect::<Vec<_>>().join(", ")
+        );
+        library.push((l1, m1, b1, champ));
+    }
+
+    // Full-precision dump for baking into a test.
+    eprintln!("\n// Library (full precision, for pinning):");
+    for (l1, m1, b1, champ) in &library {
+        eprintln!(
+            "({l1}, {m1}, {b1}, [{}]),",
+            champ.iter().map(|x| format!("{x}")).collect::<Vec<_>>().join(", ")
+        );
+    }
+
+    // Per-arm recall recovery on held-out arms (between anchors).
+    let configs = held_out_configs();
+    let starts = knockdown_starts();
+    let mut recall_caught = 0;
+    for &(l1, m1, b1) in &configs {
+        for (_, theta0) in &starts {
+            if rollout_recalling_policy(&mem, l1, m1, b1, theta0, EVAL_SECS).caught {
+                recall_caught += 1;
+            }
+        }
+    }
+    let mb = recovered_mask(&PflBaseline, &configs, EVAL_SECS);
+    let mn = recovered_mask(&EnergyShapingPolicy { p: NOMINAL_CHAMPION }, &configs, EVAL_SECS);
+    let md = recovered_mask(&EnergyShapingPolicy { p: DR_CHAMPION }, &configs, EVAL_SECS);
+    let union: Vec<bool> = (0..mb.len()).map(|i| mb[i] || mn[i] || md[i]).collect();
+    let sum = |m: &[bool]| m.iter().filter(|&&b| b).count();
+    let tot = mb.len();
+    let best_single = sum(&mb).max(sum(&mn)).max(sum(&md));
+    eprintln!("\n──────── PER-ARM RECALL vs single policies (held-out, {tot} trials) ────────");
+    eprintln!("hand-tuned baseline      : {}/{tot}", sum(&mb));
+    eprintln!("nominal champion         : {}/{tot}", sum(&mn));
+    eprintln!("domain-randomized champ  : {}/{tot}", sum(&md));
+    eprintln!("PER-ARM RECALL (library) : {recall_caught}/{tot}   ← recall nearest champion per arm");
+    eprintln!("union ceiling (any)      : {}/{tot}   ← best policy per (arm × knockdown)", sum(&union));
+
+    // Per-arm oracle: the best single policy for each arm (the true ceiling for
+    // anything keyed on arm config — recall can't do better than this). If it's
+    // near the recall number, the recoverable variation is per-knockdown, not
+    // per-arm, so arm-keyed recall is near its structural limit.
+    let mut all_policies: Vec<[f64; NP]> = library.iter().map(|&(_, _, _, c)| c).collect();
+    all_policies.push(NOMINAL_CHAMPION);
+    all_policies.push(DR_CHAMPION);
+    let mut oracle = 0usize;
+    for &(l1, m1, b1) in &configs {
+        let best_for_arm = all_policies
+            .iter()
+            .map(|&p| {
+                starts
+                    .iter()
+                    .filter(|(_, t)| rollout_config(l1, m1, b1, t, &EnergyShapingPolicy { p }, EVAL_SECS).caught)
+                    .count()
+            })
+            .max()
+            .unwrap_or(0);
+        oracle += best_for_arm;
+    }
+    eprintln!("per-arm oracle (best/arm): {oracle}/{tot}   ← ceiling for ANY arm-keyed selection");
+    if recall_caught > best_single {
+        eprintln!("\n→ per-arm recall beat the best single policy ({best_single} → {recall_caught}), toward the {}/{tot} ceiling.", sum(&union));
+    } else {
+        eprintln!("\n→ per-arm recall did not beat the best single policy this run ({recall_caught} vs {best_single}).");
     }
 }

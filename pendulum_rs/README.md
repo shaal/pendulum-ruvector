@@ -193,7 +193,17 @@ per-arm policy *recall* (the RuVector store above), not one domain-randomized
 policy.** (Side-finding: *short* links are the hard case — less leverage to pump
 energy.) `evolve RANDOMIZE_ARM=1` prints the per-policy, per-link-length, and
 ceiling breakdown. Tests: `domain_randomized_champion_generalizes`,
-`policy_union_exceeds_any_single`. Next steps in [`../docs/plans/`](../docs/plans/).
+`policy_union_exceeds_any_single`.
+
+**Per-arm library (`evolve LIBRARY=1`).** Following the ceiling finding, this
+evolves a champion *per anchor config*, stores the library in RuVector, and
+recovers held-out arms by **recalling the nearest champion per arm**. The honest
+decomposition (80 held-out trials): best single **28** → per-arm recall **29** →
+per-arm *oracle* (best policy/arm) **38** → union ceiling **42**. Per-arm
+*selection* has real headroom (38 ≫ 28), but signature-keyed *recall* captures
+little of it — the dynamics-nearest anchor isn't the best-policy anchor. The
+lever is a better recall→policy mapping, not more domain randomization. Test:
+`per_arm_library_beats_single_policies`. Next steps in [`../docs/plans/`](../docs/plans/).
 
 ## Build & run (the logging/visualization demo)
 
