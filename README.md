@@ -18,6 +18,35 @@ ergonomics you want without changing the physics.
 
 ---
 
+## ⭐ Flagship demo: an underactuated arm that balances itself (`pendulum_rs`)
+
+Beyond data logging, the Rust crate runs a **Pendubot** — a 2-link arm where
+**only joint 0 has a motor**. It must hold the whole arm straight up (an unstable
+equilibrium) through that single joint, using an LQR computed in-Rust.
+
+Two arms run side by side: a **naive** one with a fixed gain and an **adaptive**
+one that recomputes its gain when the arm changes. When link 2 suddenly extends,
+the naive arm topples while the adaptive arm recalibrates and stays up — the
+visual case for fast, RuVector-driven calibration.
+
+```bash
+cd pendulum_rs
+cargo run --release --bin arm -- --newlen 2.0 --out arm.rrd && rerun arm.rrd
+```
+
+### 🎮 Play it: You vs RuVector
+
+```bash
+cargo run --release --features game --bin play
+```
+
+Drive one arm yourself with **A / D** and try to out-balance the self-correcting
+arm. Throw disturbances at the RuVector arm — **← / →** poke, **W** wind, **M**
+payload — and watch what it can and can't recover from. Balancing an
+underactuated double pendulum by hand is brutal; that's the point.
+
+---
+
 ## Why a pendulum, for a vector DB?
 
 Calibration is recovering a robot's true physical parameters (link lengths,
@@ -122,6 +151,22 @@ Plus the **residual** `observed − true`, which is the supervision signal a
 learned calibrator predicts.
 
 ---
+
+## Roadmap
+
+| Phase | What | Status |
+|---|---|---|
+| **1** | Underactuated arm, in-Rust LQR, adaptive-vs-naive balance, interactive game | ✅ done |
+| **2** | RuVector *is* the estimator — recall nearest past dynamics to recalibrate fast (replaces the Phase-1 oracle) | planned |
+| **3** | Energy swing-up (recover from any fall) + GNN generalization across arm configs | planned |
+
+In Phase 1 the adaptive arm is told the new parameters by an oracle. Phase 2
+swaps that for RuVector: the controller forms a *dynamics signature* from the
+arm's motion, queries the vector DB for the nearest past situation, and reuses
+its known-good parameters/gain — calibration as an O(1) memory recall. Phase 3
+adds swing-up so the arm recovers from a full knockdown, and uses the GNN to
+interpolate to arm configurations never seen before. See
+[`pendulum_rs/README.md`](pendulum_rs/README.md) for the control details.
 
 ## Status
 
