@@ -1,5 +1,11 @@
 # multi_link_pendulum
 
+![Double pendulum swinging](docs/double_pendulum.gif)
+
+*A 2-link pendulum released from horizontal, rendered straight from `pendulum_sim`
+([`examples/render_gif.py`](examples/render_gif.py)). The red trail is the tip's
+chaotic path.*
+
 A clean, self-contained **n-link pendulum simulator** built as a testbed for
 experimenting with **[RuVector](https://github.com/ruvnet/RuVector)** (Rust
 vector database + GNN memory) on **robotic-arm calibration** and agentic
@@ -76,6 +82,13 @@ python -m examples.run_visual_demo --links 4 --duration 30
 
 A Rerun window opens showing the arm, per-joint angle/velocity time series, a
 phase portrait (θ vs ω), and the total-energy trace (≈flat ⇒ integrator healthy).
+
+Prefer a shareable file with no GUI? Render a GIF instead (needs the
+`viz-static` extra: `uv pip install -e '.[viz-static]'`):
+
+```bash
+python -m examples.render_gif --links 3 --duration 8 --out triple.gif
+```
 
 ### 2. Collect a RuVector-ready dataset (JSONL)
 
