@@ -76,15 +76,29 @@ fn main() {
         );
     }
 
-    println!("\nRecovery (swing-up + catch) from knocked-down starts, 15s:");
-    for (label, theta0) in [
-        ("small poke   ", vec![PI - 0.5, PI + 0.4]),
-        ("big poke     ", vec![PI - 1.2, PI + 0.9]),
+    println!("\nRecovery (collocated-PFL swing-up + LQR catch) from knocked-down starts, 15s:");
+    let starts = [
+        ("small poke    ", vec![PI - 0.5, PI + 0.4]),
+        ("big poke      ", vec![PI - 1.2, PI + 0.9]),
         ("sideways      ", vec![PI - 1.8, PI + 1.5]),
+        ("hard sideways ", vec![PI - 2.4, PI + 0.6]),
+        ("link-2 folded ", vec![PI - 0.3, PI + 2.2]),
+        ("both folded   ", vec![PI - 1.5, PI - 1.5]),
+        ("half down     ", vec![PI / 2.0, PI / 2.0]),
         ("hanging down  ", vec![0.1, -0.1]),
-    ] {
-        let final_err = recovery_test(theta0, 15.0);
-        let ok = if final_err < 0.2 { "RECOVERED ✅" } else { "did not catch ❌" };
+        ("hang + twist  ", vec![0.2, PI - 0.3]),
+        ("near top fast ", vec![PI - 0.8, PI + 0.8]),
+    ];
+    let mut recovered = 0;
+    for (label, theta0) in &starts {
+        let final_err = recovery_test(theta0.clone(), 15.0);
+        let ok = if final_err < 0.2 {
+            recovered += 1;
+            "RECOVERED ✅"
+        } else {
+            "did not catch ❌"
+        };
         println!("  {label} -> final tip error {:.2} rad  {}", final_err, ok);
     }
+    println!("\n  recovered {recovered}/{} knockdown starts", starts.len());
 }

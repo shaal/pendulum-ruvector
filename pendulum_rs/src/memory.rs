@@ -231,6 +231,104 @@ impl ConfigMemory {
             learned,
         }))
     }
+
+    /// **GNN interpolation over the config graph** (Phase 3). Nearest-neighbour
+    /// recall *snaps* an unseen arm to one seeded config; this instead blends the
+    /// `k` nearest seeds, generalizing to arms between grid points.
+    ///
+    /// The seeded configs form a graph (nodes = arms, edges to nearby arms in
+    /// signature space). For a query we gather its `k` nearest seeds and message-
+    /// pass the query node over that neighbourhood with a real `ruvector-gnn`
+    /// `RuvectorLayer` (attention + weighted aggregation), producing a context
+    /// embedding. The adopted gain is the attention-weighted blend of the
+    /// neighbours' gains, `K = Σ wᵢ·Kᵢ`, with `wᵢ = softmax(−distanceᵢ/τ)`.
+    ///
+    /// Honest note: the layer ships **untrained**, so we do not route the gains
+    /// through its random projection (that would scramble them) — we use the
+    /// graph's attention weights to interpolate, and the layer's message-pass to
+    /// embed/contextualize the neighbourhood. The interpolation is the win: for a
+    /// between-seed arm the blended gain lands closer to the true gain than any
+    /// single neighbour's.
+    #[cfg(feature = "gnn")]
+    pub fn recall_interpolated(
+        &self,
+        sig: &Signature,
+        k: usize,
+    ) -> Result<Option<InterpResult>, Box<dyn std::error::Error>> {
+        use ruvector_gnn::RuvectorLayer;
+        let results = self.db.search(SearchQuery {
+            vector: self.whiten(sig),
+            k,
+            filter: None,
+            ef_search: None,
+        })?;
+        if results.is_empty() {
+            return Ok(None);
+        }
+
+        // Softmax-over-(-distance) attention weights across the neighbourhood.
+        let tau = 0.5f32;
+        let min_score = results.iter().map(|r| r.score).fold(f32::INFINITY, f32::min);
+        let exps: Vec<f32> = results.iter().map(|r| (-(r.score - min_score) / tau).exp()).collect();
+        let z: f32 = exps.iter().sum::<f32>().max(1e-9);
+        let weights: Vec<f32> = exps.iter().map(|e| e / z).collect();
+
+        // Message-pass the query node over its neighbours with a real GNN layer
+        // (demonstrates ruvector-gnn operating on the config graph). The context
+        // embedding is a diagnostic; the gain comes from the attention blend.
+        let layer = RuvectorLayer::new(SIG_DIM, 16, 2, 0.0).map_err(|e| format!("gnn init: {e:?}"))?;
+        let query_vec = self.whiten(sig);
+        let neighbor_vecs: Vec<Vec<f32>> =
+            results.iter().filter_map(|r| r.vector.clone()).collect();
+        let embedding = layer.forward(&query_vec, &neighbor_vecs, &weights);
+
+        // Attention-weighted blend of the neighbours' gains and e_up.
+        let mut k_blend = [0.0f64; 4];
+        let mut e_up = 0.0f64;
+        let mut contributors = Vec::with_capacity(results.len());
+        for (r, &w) in results.iter().zip(&weights) {
+            let md = r.metadata.as_ref();
+            let getf = |key: &str| md.and_then(|m| m.get(key)).and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let kn = md
+                .and_then(|m| m.get("k"))
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    let mut kk = [0.0f64; 4];
+                    for (i, x) in a.iter().take(4).enumerate() {
+                        kk[i] = x.as_f64().unwrap_or(0.0);
+                    }
+                    kk
+                })
+                .unwrap_or([0.0; 4]);
+            for i in 0..4 {
+                k_blend[i] += w as f64 * kn[i];
+            }
+            e_up += w as f64 * getf("e_up");
+            contributors.push((getf("l1"), w));
+        }
+
+        Ok(Some(InterpResult {
+            k: k_blend,
+            e_up,
+            contributors,
+            embedding_dim: embedding.len(),
+        }))
+    }
+}
+
+/// Result of [`ConfigMemory::recall_interpolated`]: a gain blended across config-
+/// graph neighbours, plus which arms contributed and at what weight.
+#[cfg(feature = "gnn")]
+#[derive(Debug, Clone)]
+pub struct InterpResult {
+    /// The interpolated balance gain.
+    pub k: Vec4,
+    /// The interpolated upright-energy target.
+    pub e_up: f64,
+    /// `(link-2 length, attention weight)` for each contributing seed.
+    pub contributors: Vec<(f64, f32)>,
+    /// Width of the GNN context embedding produced by the message-pass.
+    pub embedding_dim: usize,
 }
 
 #[cfg(test)]
@@ -264,6 +362,42 @@ mod tests {
             (near.l1 - 2.0).abs() < 1e-9 || (near.l1 - 2.5).abs() < 1e-9,
             "off-grid 2.25 should snap to 2.0 or 2.5, got {}",
             near.l1
+        );
+    }
+
+    /// Phase 3: GNN interpolation should beat nearest-neighbour *snapping* for an
+    /// arm that lies between seeded grid points — the blended gain lands closer
+    /// to the true gain than the single nearest seed's gain.
+    #[cfg(feature = "gnn")]
+    #[test]
+    fn gnn_interpolation_beats_snapping() {
+        let path = std::env::temp_dir()
+            .join("pendulum_phase3_gnn.db")
+            .to_string_lossy()
+            .into_owned();
+        let mut mem = ConfigMemory::new(&path).unwrap();
+        mem.seed_grid().unwrap();
+        let k_probe = nominal_probe_gain(SEED_DT);
+
+        // A clearly between-seed arm (1.75 m sits midway between 1.5 and 2.0).
+        let off_arm = ConfigMemory::arm(1.75, 1.0, 0.05);
+        let true_k = balance_gain(&off_arm, SEED_DT);
+        let sig = closed_loop_signature(&off_arm, &k_probe);
+
+        let nearest = mem.recall(&sig).unwrap().unwrap();
+        let interp = mem.recall_interpolated(&sig, 4).unwrap().unwrap();
+
+        let dist = |a: &Vec4, b: &Vec4| -> f64 {
+            (0..4).map(|i| (a[i] - b[i]).powi(2)).sum::<f64>().sqrt()
+        };
+        let err_snap = dist(&nearest.k, &true_k);
+        let err_interp = dist(&interp.k, &true_k);
+
+        assert!(interp.embedding_dim > 0, "GNN message-pass produced an embedding");
+        assert!(interp.contributors.len() >= 2, "interpolation blends multiple seeds");
+        assert!(
+            err_interp < err_snap,
+            "interpolated gain (err {err_interp:.2}) should beat snapped (err {err_snap:.2})"
         );
     }
 }
