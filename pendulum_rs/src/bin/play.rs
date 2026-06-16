@@ -14,7 +14,7 @@
 //! the point. RuVector makes it look easy.
 
 use macroquad::prelude::*;
-use pendulum_rs::control::{balance_gain, balance_torque, Vec4};
+use pendulum_rs::control::{balance_gain, recover_torque, upright_energy, Vec4};
 use pendulum_rs::simulator::Pendulum;
 use std::f64::consts::PI;
 
@@ -28,11 +28,12 @@ struct Game {
     you: Pendulum,
     auto: Pendulum,
     k_auto: Vec4,
+    e_up: f64, // auto arm's upright energy target (for swing-up); refreshed on change
     t: f64,
     disturbed: bool,
-    you_alive: bool,
-    you_survived: f64,
-    auto_alive: bool,
+    you_up: bool,       // currently near upright (for display only — never locks input)
+    you_balanced: f64,  // total time you've kept it up
+    auto_up: bool,
     auto_wind_on: bool,
 }
 
@@ -48,15 +49,17 @@ impl Game {
         let you = fresh_arm();
         let auto = fresh_arm();
         let k_auto = balance_gain(&auto, DT);
+        let e_up = upright_energy(&auto);
         Game {
             you,
             auto,
             k_auto,
+            e_up,
             t: 0.0,
             disturbed: false,
-            you_alive: true,
-            you_survived: 0.0,
-            auto_alive: true,
+            you_up: true,
+            you_balanced: 0.0,
+            auto_up: true,
             auto_wind_on: false,
         }
     }
@@ -74,45 +77,33 @@ impl Game {
         self.auto.set_length(1, NEW_LEN);
         // The auto arm recalibrates (oracle now; RuVector in Phase 2).
         self.k_auto = balance_gain(&self.auto, DT);
+        self.e_up = upright_energy(&self.auto);
         self.disturbed = true;
     }
 
     fn step(&mut self, human_torque: f64) {
-        // You: your key torque drives joint 0 — but ONLY while alive. Once fallen,
-        // input is locked out (torque forced to 0) and the arm flops passively.
-        let ht = if self.you_alive {
-            human_torque.clamp(-U_MAX, U_MAX)
-        } else {
-            0.0
-        };
-        self.you.step(&[ht, 0.0]);
-        if self.you_alive {
-            if Self::tip_error(&self.you) > 1.4 {
-                self.you_alive = false;
-            } else {
-                self.you_survived = self.t;
-            }
+        // You: A/D ALWAYS drives joint 0 — even when tipped over, so you can try
+        // to fight the arm back up. There is no "game over".
+        self.you.step(&[human_torque.clamp(-U_MAX, U_MAX), 0.0]);
+        self.you_up = Self::tip_error(&self.you) < 1.4;
+        if self.you_up {
+            self.you_balanced += DT;
         }
 
-        // Auto: LQR balance while alive; passive flop after it loses.
-        if self.auto_alive {
-            let u = balance_torque(&self.k_auto, &self.auto.theta, &self.auto.omega, U_MAX);
-            self.auto.step(&[u, 0.0]);
-            if Self::tip_error(&self.auto) > 1.4 {
-                self.auto_alive = false;
-            }
-        } else {
-            self.auto.step(&[0.0, 0.0]);
-        }
+        // Auto: ALWAYS tries to recover — LQR balance within its basin (catches
+        // pokes, even big ones), energy swing-up when knocked further out. It is
+        // never disabled. (A full sideways/hang knockdown is past what swing-up
+        // can catch for a double pendulum — that's Phase 3.)
+        let u = recover_torque(&self.auto, &self.k_auto, self.e_up, U_MAX);
+        self.auto.step(&[u, 0.0]);
+        self.auto_up = Self::tip_error(&self.auto) < 1.4;
         self.t += DT;
     }
 
     // --- "bother the RuVector arm" disturbances ---------------------------
     /// Shove the auto arm's elbow with a velocity impulse (recoverable kick).
     fn poke_auto(&mut self, dir: f64) {
-        if self.auto_alive {
-            self.auto.omega[1] += dir * 3.0;
-        }
+        self.auto.omega[1] += dir * 3.0;
     }
     /// Toggle a steady wind on the auto arm (a sustained force it must fight).
     fn toggle_wind(&mut self) {
@@ -123,6 +114,7 @@ impl Game {
     fn add_payload(&mut self) {
         let m = self.auto.m[1] + 1.0;
         self.auto.set_mass(1, m);
+        self.e_up = upright_energy(&self.auto);
     }
 }
 
@@ -201,22 +193,22 @@ async fn main() {
         let h = screen_height();
         let you_base = (screen_width() * 0.27, h * 0.78);
         let auto_base = (screen_width() * 0.73, h * 0.78);
-        draw_arm(&game.you, you_base, Color::new(0.86, 0.27, 0.27, 1.0), game.you_alive);
-        draw_arm(&game.auto, auto_base, Color::new(0.27, 0.78, 0.43, 1.0), game.auto_alive);
+        draw_arm(&game.you, you_base, Color::new(0.86, 0.27, 0.27, 1.0), game.you_up);
+        draw_arm(&game.auto, auto_base, Color::new(0.27, 0.78, 0.43, 1.0), game.auto_up);
 
         // labels
-        let you_status = if game.you_alive { "BALANCING" } else { "FELL" };
-        let auto_status = if game.auto_alive { "BALANCING" } else { "FELL" };
+        let you_status = if game.you_up { "BALANCING" } else { "DOWN — fight it back up!" };
+        let auto_status = if game.auto_up { "BALANCING" } else { "RECOVERING…" };
         draw_text("YOU  (A / D to rotate motor)", you_base.0 - 130.0, 40.0, 26.0, WHITE);
         draw_text(
-            &format!("{}   survived {:.1}s", you_status, game.you_survived),
+            &format!("{}   balanced {:.1}s", you_status, game.you_balanced),
             you_base.0 - 130.0,
             68.0,
             22.0,
-            if game.you_alive { GREEN } else { RED },
+            if game.you_up { GREEN } else { ORANGE },
         );
         draw_text("RuVector  (auto-balance + recalibrate)", auto_base.0 - 150.0, 40.0, 26.0, WHITE);
-        draw_text(auto_status, auto_base.0 - 150.0, 68.0, 22.0, if game.auto_alive { GREEN } else { RED });
+        draw_text(auto_status, auto_base.0 - 150.0, 68.0, 22.0, if game.auto_up { GREEN } else { ORANGE });
 
         // Controls for bothering the RuVector arm (with live wind indicator).
         let wind_tag = if game.auto_wind_on { "ON" } else { "off" };

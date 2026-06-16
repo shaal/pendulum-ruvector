@@ -168,6 +168,43 @@ pub fn balance_gain(sim: &Pendulum, dt: f64) -> Vec4 {
     dlqr(&model, &[160.0, 160.0, 14.0, 14.0], 0.25, dt)
 }
 
+/// Mechanical energy of the arm at the straight-up rest pose (KE=0, all links
+/// up). Used as the target for swing-up.
+pub fn upright_energy(sim: &Pendulum) -> f64 {
+    let n = sim.n;
+    let mut cum = vec![0.0; n];
+    let mut acc = 0.0;
+    for i in (0..n).rev() {
+        acc += sim.m[i];
+        cum[i] = acc;
+    }
+    // PE_up = -g Σ cum_i l_i cos(π) = +g Σ cum_i l_i ; KE = 0.
+    (0..n).map(|i| sim.g * cum[i] * sim.l[i]).sum()
+}
+
+/// Energy-pumping swing-up torque on joint 0: inject energy when the arm has
+/// less than the upright energy, pulling it toward the top where the LQR can
+/// catch it. `u ∝ (E_up − E)·ω₀`. Clamped to the motor limit.
+pub fn swingup_torque(sim: &Pendulum, e_up: f64, u_max: f64) -> f64 {
+    let e = sim.total_energy();
+    let k_e = 6.0;
+    (k_e * (e_up - e) * sim.omega[0]).clamp(-u_max, u_max)
+}
+
+/// Always-on recovery controller: balance with LQR when close to upright,
+/// otherwise swing up. This is what lets the auto arm "always try to recover".
+pub fn recover_torque(sim: &Pendulum, k: &Vec4, e_up: f64, u_max: f64) -> f64 {
+    let w = |a: f64| (a + PI).rem_euclid(2.0 * PI) - PI;
+    let tip_err = w(sim.theta[0] - PI).abs() + w(sim.theta[1] - PI).abs();
+    // LQR has a sizable basin of attraction; use it for anything it can catch,
+    // and only attempt energy swing-up when knocked well past that.
+    if tip_err < 1.0 {
+        balance_torque(k, &sim.theta, &sim.omega, u_max)
+    } else {
+        swingup_torque(sim, e_up, u_max)
+    }
+}
+
 fn wrap(a: f64) -> f64 {
     (a + PI).rem_euclid(2.0 * PI) - PI
 }
