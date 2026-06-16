@@ -122,11 +122,17 @@ arm now hoists itself back up from most knockdowns. Test:
 **Goal-conditioned (the target can change).** The controller is parameterized by
 a *goal* equilibrium (`recover_to(sim, goal, …)`, `balance_gain_for(goal)`,
 `energy_at(goal)`) — the upright functions are now thin wrappers. The *same*
-controller reaches different targets: `[π,π]` (both up, 7/10) and `[π,0]` (link-1
-up, link-2 dangling, 4/10). Reachable goals are exactly `{θ₀ free} × {θ₁∈{0,π}}`
-— with joint 1 passive, link 2 must hang gravity-balanced. `cargo run --bin check`
-prints both. (`[π,0]` is less reliable because the energy pump aims at *energy*,
-not the goal *posture*.) Tests: `reaches_link1_up_link2_down_goal`.
+controller reaches different targets: `[π,π]` (both up) and `[π,0]` (link-1 up,
+link-2 dangling). Reachable goals are exactly `{θ₀ free} × {θ₁∈{0,π}}` — with
+joint 1 passive, link 2 must hang gravity-balanced. `cargo run --bin check`
+prints both.
+
+A **posture-aware** swing-up (`swingup_to`) makes non-upright goals reliable: its
+posture gain is *goal-dependent* — `k_p = 3·(1+cos θ₁_goal)`, zero when link 2's
+target is up (energy already pins the pose) and 6 when it's down (energy is
+ambiguous, so posture must be steered). That lifts `[π,0]` from **4/10 → 7/10**
+and even nudges `[π,π]` to **8/10**. Tests: `goal_conditioned_recovery_rates`,
+`reaches_link1_up_link2_down_goal`.
 
 ### GNN interpolation — generalize between seeded arms
 
