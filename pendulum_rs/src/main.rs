@@ -20,7 +20,7 @@ use std::io::Write;
 #[cfg(feature = "vectordb")]
 use ruvector_core::types::DbOptions; // DbOptions isn't re-exported at the crate root
 #[cfg(feature = "vectordb")]
-use ruvector_core::{DistanceMetric, VectorDB, VectorEntry};
+use ruvector_core::{DistanceMetric, SearchQuery, VectorDB, VectorEntry};
 #[cfg(feature = "gnn")]
 use ruvector_gnn::RuvectorLayer;
 
@@ -33,6 +33,36 @@ struct Args {
     out: String,
     /// Optional CSV dump of joint positions per frame (for external plotting).
     csv: Option<String>,
+    /// "passive" (free swing) or "actuated" (PD controller drives links upright).
+    mode: String,
+}
+
+/// PD controller that drives every link toward upright (theta = pi).
+/// Holding a multi-link pendulum inverted is genuinely hard, so this is lively
+/// rather than perfectly stable — the point is to demonstrate torque actuation.
+/// Output is clamped so a divergent link can't produce NaN-inducing torques.
+fn pd_control(theta: &[f64], omega: &[f64], kp: f64, kd: f64) -> Vec<f64> {
+    theta
+        .iter()
+        .zip(omega)
+        .map(|(&th, &om)| {
+            // Wrap the angle error into (-pi, pi] so control takes the short way.
+            let err = (PI - th + PI).rem_euclid(2.0 * PI) - PI;
+            (kp * err - kd * om).clamp(-40.0, 40.0)
+        })
+        .collect()
+}
+
+/// Flatten the live state into RuVector's embedding layout: [sinθ | cosθ | ω | τ].
+#[cfg(feature = "vectordb")]
+fn state_vector(sim: &Pendulum) -> Vec<f32> {
+    let n = sim.n;
+    let mut v: Vec<f32> = Vec::with_capacity(4 * n);
+    v.extend((0..n).map(|i| sim.theta[i].sin() as f32));
+    v.extend((0..n).map(|i| sim.theta[i].cos() as f32));
+    v.extend((0..n).map(|i| sim.omega[i] as f32));
+    v.extend((0..n).map(|i| sim.tau[i] as f32));
+    v
 }
 
 fn parse_args() -> Args {
@@ -44,6 +74,7 @@ fn parse_args() -> Args {
         spawn: false,
         out: "pendulum_rs.rrd".to_string(),
         csv: None,
+        mode: "passive".to_string(),
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -54,6 +85,7 @@ fn parse_args() -> Args {
             "--damping" => a.damping = it.next().unwrap().parse().unwrap(),
             "--out" => a.out = it.next().unwrap(),
             "--csv" => a.csv = Some(it.next().unwrap()),
+            "--mode" => a.mode = it.next().unwrap(),
             "--spawn" => a.spawn = true,
             other => eprintln!("(ignoring unknown arg: {other})"),
         }
@@ -109,10 +141,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .as_ref()
         .map(|p| std::io::BufWriter::new(std::fs::File::create(p).expect("create csv")));
 
+    let actuated = args.mode == "actuated";
     let n_steps = (args.duration * args.fps) as usize;
     for step in 0..n_steps {
-        // Passive swing (zero torque). Swap in a controller here for actuation.
-        let tau = vec![0.0; n];
+        // Passive: free swing. Actuated: PD torques computed from the live state.
+        let tau = if actuated {
+            pd_control(&sim.theta, &sim.omega, 12.0, 3.0)
+        } else {
+            vec![0.0; n]
+        };
         sim.step(&tau);
 
         if let Some(w) = csv_w.as_mut() {
@@ -155,21 +192,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // ---- RuVector vector DB: index the state vector (every 5 steps) ----
         #[cfg(feature = "vectordb")]
         if step % 5 == 0 {
-            let mut v: Vec<f32> = Vec::with_capacity(4 * n);
-            v.extend((0..n).map(|i| sim.theta[i].sin() as f32));
-            v.extend((0..n).map(|i| sim.theta[i].cos() as f32));
-            v.extend((0..n).map(|i| sim.omega[i] as f32));
-            v.extend((0..n).map(|i| sim.tau[i] as f32));
-
             let mut md = std::collections::HashMap::new();
             md.insert("t".to_string(), serde_json::json!(sim.t));
             md.insert("step".to_string(), serde_json::json!(step));
             db.insert(VectorEntry {
                 id: Some(format!("s{step}")),
-                vector: v,
+                vector: state_vector(&sim),
                 metadata: Some(md),
             })?;
             inserted += 1;
+        }
+
+        // ---- RuVector search: "have I been in a state like this before?" ----
+        // Query the index with the current state. This is the retrieval half of
+        // a calibration loop: at run time you fetch the nearest *past* states
+        // (and their known-good parameters / corrections) to warm-start an
+        // estimate. We skip the very first steps so there's history to match.
+        #[cfg(feature = "vectordb")]
+        if step % 30 == 0 && inserted > 5 {
+            // Simulate an imperfect *observation* of the current state by adding
+            // small deterministic noise, then ask RuVector for the nearest clean
+            // indexed state. Non-zero score = how far the noisy reading sits from
+            // the closest thing we've actually seen — the retrieval half of a
+            // calibration loop.
+            let mut query = state_vector(&sim);
+            for (j, x) in query.iter_mut().enumerate() {
+                *x += 0.05 * (((step * 7 + j * 13) % 11) as f32 - 5.0) / 5.0;
+            }
+            let results = db.search(SearchQuery {
+                vector: query,
+                k: 3,
+                filter: None,
+                ef_search: None,
+            })?;
+            if let Some(top) = results.first() {
+                rec.log("plots/nearest_score", &rerun::Scalars::new([top.score as f64]))?;
+                let when = top
+                    .metadata
+                    .as_ref()
+                    .and_then(|m| m.get("t"))
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
+                eprintln!(
+                    "[search] step {step}: noisy obs -> nearest clean state id={} score={:.4} (t={})",
+                    top.id, top.score, when
+                );
+            }
         }
 
         // ---- RuVector GNN: message-pass over the link/joint graph ----
