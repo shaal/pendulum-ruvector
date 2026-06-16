@@ -16,3 +16,7 @@ evolve_library.db
 evolve_library.db/
 evolve_perfkey.db
 evolve_perfkey.db/
+pop_indep.db
+pop_indep.db/
+pop_shared.db
+pop_shared.db/

@@ -54,6 +54,61 @@ pub struct ConfigMemory {
     policy_next_id: usize,
 }
 
+/// A RuVector-backed **shared pool of evolved policies** — the migration channel
+/// for the Stage-4 competing population. Each island writes its champion (params
+/// as the vector, fitness in metadata); peers read the global best back out. This
+/// is RuVector as the population's collective memory.
+pub struct SharedPolicyStore {
+    db: VectorDB,
+    next: usize,
+}
+
+impl SharedPolicyStore {
+    /// Fresh store of `dim`-dimensional policy parameter vectors.
+    pub fn new(storage_path: &str, dim: usize) -> Result<Self, Box<dyn std::error::Error>> {
+        let _ = std::fs::remove_file(storage_path);
+        let opts = DbOptions {
+            dimensions: dim,
+            distance_metric: DistanceMetric::Euclidean,
+            storage_path: storage_path.to_string(),
+            ..Default::default()
+        };
+        Ok(Self { db: VectorDB::new(opts)?, next: 0 })
+    }
+
+    /// Contribute a champion (params + its fitness) to the shared pool.
+    pub fn insert(&mut self, params: &[f64], fitness: f64) -> Result<(), Box<dyn std::error::Error>> {
+        let mut md = HashMap::new();
+        md.insert("fitness".to_string(), serde_json::json!(fitness));
+        self.db.insert(VectorEntry {
+            id: Some(format!("p{}", self.next)),
+            vector: params.iter().map(|&x| x as f32).collect(),
+            metadata: Some(md),
+        })?;
+        self.next += 1;
+        Ok(())
+    }
+
+    /// The highest-fitness champion in the pool so far (the discovery to migrate).
+    pub fn best(&self) -> Result<Option<(Vec<f64>, f64)>, Box<dyn std::error::Error>> {
+        let mut best: Option<(Vec<f64>, f64)> = None;
+        for id in self.db.keys()? {
+            if let Some(e) = self.db.get(&id)? {
+                let f = e
+                    .metadata
+                    .as_ref()
+                    .and_then(|m| m.get("fitness"))
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(f64::NEG_INFINITY);
+                if best.as_ref().map(|b| f > b.1).unwrap_or(true) {
+                    best = Some((e.vector.iter().map(|&x| x as f64).collect(), f));
+                }
+            }
+        }
+        Ok(best)
+    }
+}
+
 /// A learned swing-up policy recalled from RuVector for a config signature.
 #[derive(Debug, Clone)]
 pub struct RecalledPolicy {

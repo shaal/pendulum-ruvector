@@ -225,6 +225,15 @@ cross-arm generalization plateaus at ~28–29/80 — the oracle's 38 needs test-
 specific knowledge no recall can access.* Full write-up in
 [`../docs/plans/`](../docs/plans/).
 
+**Competing population sharing through RuVector (`evolve POPULATION=1`).** The
+fullest form of "hundreds competing, learning from each other": a population of
+deliberately-weak CEM *islands*. With sharing, each island writes its champion
+into a shared RuVector store every few generations and migrates the global best
+back into its own search; without it the islands run independently (same seed —
+sharing is the only difference). **RuVector-mediated sharing reaches
+population-wide competence in up to 80% fewer total rollouts** (and the harder
+the target, the bigger the gap). Test: `ruvector_sharing_accelerates_the_population`.
+
 ## Build & run (the logging/visualization demo)
 
 The base build is self-contained (just the Rerun SDK):

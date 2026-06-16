@@ -116,12 +116,21 @@ essential). Result: **`[π,0]` 4/10 → 7/10 and `[π,π]` 7/10 → 8/10** — b
 improved, no regression. Tests: `goal_conditioned_recovery_rates`. `swingup_pfl`
 (the evolved-policy rollout pump) is left untouched.
 
-### Stage 4 — Live competing population (optional, ambitious)
-Many agents run concurrently, each on randomized conditions, **sharing
-discoveries through RuVector mid-run** (write good trajectories; retrieve peers'
-successes to warm-start). This is the literal "hundreds competing, learning from
-each other." Measure: does shared memory reach a target fitness in fewer total
-rollouts than independent search?
+### Stage 4 — Live competing population *(shipped; clean win)*
+A population of CEM **islands** competes, sharing discoveries through RuVector.
+`evolve POPULATION=1`: 8 deliberately weak islands (pop 16). With sharing, every
+few generations each island writes its champion into a `SharedPolicyStore` (a
+real RuVector `VectorDB` of policy params + fitness) and migrates the global best
+back into its own search; without it they run independently. **Measured answer:
+RuVector-mediated sharing reaches population-wide competence (all islands ≥ a
+target) in up to 80% fewer total rollouts** (target 70: 4608 vs 23040; the
+harder the target, the bigger the gap — and at small island sizes independent
+search often never gets *every* island there, while sharing does). Same seed in
+both conditions, so sharing is the only difference. Test:
+`ruvector_sharing_accelerates_the_population`. This is the literal "hundreds
+competing, learning from each other," with RuVector as the collective brain.
+**Next:** similarity-based migration (RuVector nearest-neighbour) instead of
+global-best; a live/interactive visualization of the competing population.
 
 ### Stage 5 — Residual RL (optional)
 If ES plateaus, add a small learned residual *on top of* the model-based
