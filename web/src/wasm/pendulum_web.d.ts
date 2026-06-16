@@ -44,6 +44,53 @@ export class FreeSwing {
 }
 
 /**
+ * Station 2 — RuVector recognizes a changed arm and recalls its gain.
+ */
+export class Recalibrator {
+    free(): void;
+    [Symbol.dispose](): void;
+    adaptive_positions(): Float64Array;
+    committed(): boolean;
+    disturbed(): boolean;
+    encounter(): number;
+    /**
+     * Wipe everything RuVector learned and re-seed the cold grid.
+     */
+    forget(): void;
+    lag(): number;
+    last_lag(): number;
+    naive_positions(): Float64Array;
+    constructor(new_l1: number);
+    new_len(): number;
+    /**
+     * Throw the same disturbance again, keeping what RuVector has learned —
+     * the lag should shrink on a repeat.
+     */
+    next_encounter(): void;
+    /**
+     * "nominal" | "probing" | "recognized"
+     */
+    phase(): string;
+    recall_distance(): number;
+    recalled_id(): string;
+    recalled_l1(): number;
+    recalled_learned(): boolean;
+    set_learning(on: boolean): void;
+    /**
+     * Set the disturbance length (link-2's new length); applied on the next
+     * encounter. If still pre-disturbance this encounter, it takes effect here.
+     */
+    set_new_len(l1: number): void;
+    /**
+     * Advance the scenario by `steps` control timesteps.
+     */
+    tick(steps: number): void;
+    time(): number;
+    tip_error_adaptive(): number;
+    tip_error_naive(): number;
+}
+
+/**
  * Proof that RuVector's in-memory vector DB runs in the browser. Creates a tiny
  * in-memory store, inserts two vectors, and returns the id of the nearest match
  * to a query — entirely client-side, no server. Also keeps `ruvector-core` linked
@@ -58,6 +105,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_freeswing_free: (a: number, b: number) => void;
+    readonly __wbg_recalibrator_free: (a: number, b: number) => void;
     readonly freeswing_energy: (a: number) => number;
     readonly freeswing_links: (a: number) => number;
     readonly freeswing_new: (a: number, b: number) => number;
@@ -65,8 +113,30 @@ export interface InitOutput {
     readonly freeswing_positions: (a: number) => [number, number];
     readonly freeswing_set_damping: (a: number, b: number) => void;
     readonly freeswing_step: (a: number, b: number) => void;
+    readonly recalibrator_adaptive_positions: (a: number) => [number, number];
+    readonly recalibrator_committed: (a: number) => number;
+    readonly recalibrator_disturbed: (a: number) => number;
+    readonly recalibrator_encounter: (a: number) => number;
+    readonly recalibrator_forget: (a: number) => void;
+    readonly recalibrator_naive_positions: (a: number) => [number, number];
+    readonly recalibrator_new: (a: number) => number;
+    readonly recalibrator_next_encounter: (a: number) => void;
+    readonly recalibrator_phase: (a: number) => [number, number];
+    readonly recalibrator_recalled_id: (a: number) => [number, number];
+    readonly recalibrator_recalled_learned: (a: number) => number;
+    readonly recalibrator_set_learning: (a: number, b: number) => void;
+    readonly recalibrator_set_new_len: (a: number, b: number) => void;
+    readonly recalibrator_tick: (a: number, b: number) => void;
+    readonly recalibrator_tip_error_adaptive: (a: number) => number;
+    readonly recalibrator_tip_error_naive: (a: number) => number;
     readonly ruvector_smoke: () => [number, number];
     readonly start: () => void;
+    readonly recalibrator_time: (a: number) => number;
+    readonly recalibrator_lag: (a: number) => number;
+    readonly recalibrator_last_lag: (a: number) => number;
+    readonly recalibrator_new_len: (a: number) => number;
+    readonly recalibrator_recall_distance: (a: number) => number;
+    readonly recalibrator_recalled_l1: (a: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

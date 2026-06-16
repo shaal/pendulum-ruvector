@@ -21,13 +21,21 @@ rerun = { version = "0.33", default-features = false, features = ["sdk"], option
 #   We disable RuVector's default features because they include `simd-avx512`
 #   (x86-only) and `simsimd` (C build) — both unfriendly on Apple Silicon.
 #   The portable `storage`/`hnsw`/`parallel` features are all we need.
-ruvector-core = { path = "../RuVector/crates/ruvector-core", default-features = false, features = ["storage", "hnsw", "parallel"], optional = true }
+# ruvector-core is declared per-target below (native: file + HNSW + parallel; wasm: in-memory).
 # `gnn`: message-pass over the link/joint graph with a real RuVector GNN layer.
 ruvector-gnn = { path = "../RuVector/crates/ruvector-gnn", optional = true }
 serde_json = { version = "1", optional = true }
 # Interactive "you vs RuVector" game (the `play` binary). Optional: it pulls a
 # graphics stack, so it's only built when the `game` feature is on.
 macroquad = { version = "0.4", optional = true }
+
+# RuVector's vector DB, declared per target so wasm gets the pure in-memory
+# backend (no redb / memmap2 / rayon) while native keeps file-backed HNSW + parallel.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ruvector-core = { path = "../RuVector/crates/ruvector-core", default-features = false, features = ["storage", "hnsw", "parallel"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+ruvector-core = { path = "../RuVector/crates/ruvector-core", default-features = false, features = ["memory-only"], optional = true }
 
 [features]
 # `viz` is on by default so every documented native command (the `arm`, base

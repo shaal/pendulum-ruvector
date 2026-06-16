@@ -12,7 +12,7 @@ wasm-bindgen = "0.2"
 
 # The shared physics/control/learning core, with Rerun (native-only) and every
 # other feature-gated bit OFF — this is what makes the lib wasm-buildable.
-pendulum_rs = { path = "../pendulum_rs", default-features = false }
+pendulum_rs = { path = "../pendulum_rs", default-features = false, features = ["vectordb"] }
 
 # RuVector's vector DB, in-memory only: no `storage` (file/redb/memmap2), no
 # `hnsw` (mmap), no `parallel` (rayon) — leaving MemoryStorage + FlatIndex, which

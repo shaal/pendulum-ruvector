@@ -82,6 +82,199 @@ export class FreeSwing {
 if (Symbol.dispose) FreeSwing.prototype[Symbol.dispose] = FreeSwing.prototype.free;
 
 /**
+ * Station 2 — RuVector recognizes a changed arm and recalls its gain.
+ */
+export class Recalibrator {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        RecalibratorFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_recalibrator_free(ptr, 0);
+    }
+    /**
+     * @returns {Float64Array}
+     */
+    adaptive_positions() {
+        const ret = wasm.recalibrator_adaptive_positions(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @returns {boolean}
+     */
+    committed() {
+        const ret = wasm.recalibrator_committed(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    disturbed() {
+        const ret = wasm.recalibrator_disturbed(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {number}
+     */
+    encounter() {
+        const ret = wasm.recalibrator_encounter(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Wipe everything RuVector learned and re-seed the cold grid.
+     */
+    forget() {
+        wasm.recalibrator_forget(this.__wbg_ptr);
+    }
+    /**
+     * @returns {number}
+     */
+    lag() {
+        const ret = wasm.recalibrator_lag(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    last_lag() {
+        const ret = wasm.recalibrator_last_lag(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Float64Array}
+     */
+    naive_positions() {
+        const ret = wasm.recalibrator_naive_positions(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @param {number} new_l1
+     */
+    constructor(new_l1) {
+        const ret = wasm.recalibrator_new(new_l1);
+        this.__wbg_ptr = ret;
+        RecalibratorFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @returns {number}
+     */
+    new_len() {
+        const ret = wasm.recalibrator_new_len(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Throw the same disturbance again, keeping what RuVector has learned —
+     * the lag should shrink on a repeat.
+     */
+    next_encounter() {
+        wasm.recalibrator_next_encounter(this.__wbg_ptr);
+    }
+    /**
+     * "nominal" | "probing" | "recognized"
+     * @returns {string}
+     */
+    phase() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.recalibrator_phase(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    recall_distance() {
+        const ret = wasm.recalibrator_recall_distance(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {string}
+     */
+    recalled_id() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.recalibrator_recalled_id(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    recalled_l1() {
+        const ret = wasm.recalibrator_recalled_l1(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {boolean}
+     */
+    recalled_learned() {
+        const ret = wasm.recalibrator_recalled_learned(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @param {boolean} on
+     */
+    set_learning(on) {
+        wasm.recalibrator_set_learning(this.__wbg_ptr, on);
+    }
+    /**
+     * Set the disturbance length (link-2's new length); applied on the next
+     * encounter. If still pre-disturbance this encounter, it takes effect here.
+     * @param {number} l1
+     */
+    set_new_len(l1) {
+        wasm.recalibrator_set_new_len(this.__wbg_ptr, l1);
+    }
+    /**
+     * Advance the scenario by `steps` control timesteps.
+     * @param {number} steps
+     */
+    tick(steps) {
+        wasm.recalibrator_tick(this.__wbg_ptr, steps);
+    }
+    /**
+     * @returns {number}
+     */
+    time() {
+        const ret = wasm.recalibrator_time(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    tip_error_adaptive() {
+        const ret = wasm.recalibrator_tip_error_adaptive(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    tip_error_naive() {
+        const ret = wasm.recalibrator_tip_error_naive(this.__wbg_ptr);
+        return ret;
+    }
+}
+if (Symbol.dispose) Recalibrator.prototype[Symbol.dispose] = Recalibrator.prototype.free;
+
+/**
  * Proof that RuVector's in-memory vector DB runs in the browser. Creates a tiny
  * in-memory store, inserts two vectors, and returns the id of the nearest match
  * to a query — entirely client-side, no server. Also keeps `ruvector-core` linked
@@ -151,6 +344,9 @@ function __wbg_get_imports() {
 const FreeSwingFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_freeswing_free(ptr, 1));
+const RecalibratorFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_recalibrator_free(ptr, 1));
 
 function getArrayF64FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
