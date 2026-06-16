@@ -44,6 +44,43 @@ export class FreeSwing {
 }
 
 /**
+ * Station 5 — a competing population that shares discoveries through RuVector.
+ */
+export class Population {
+    free(): void;
+    [Symbol.dispose](): void;
+    best_island(): number;
+    /**
+     * Evolve `count` islands (round-robin), running the migration each time the
+     * sweep wraps. This is the heavy part — the caller throttles how often it runs
+     * so a generation is spread over several frames and never blocks rendering.
+     */
+    evolve_islands(count: number): void;
+    fitnesses(): Float64Array;
+    generation(): number;
+    n_islands(): number;
+    constructor(sharing: boolean);
+    /**
+     * Flat positions for every arm, concatenated: island 0's [x0,y0,x1,y1,x2,y2],
+     * then island 1's, … (3 points per 2-link arm).
+     */
+    positions_all(): Float64Array;
+    restart(): void;
+    rollouts(): number;
+    set_sharing(on: boolean): void;
+    sharing(): boolean;
+    /**
+     * Read-and-clear the "a migration just happened" pulse (for the flash).
+     */
+    take_migrated(): boolean;
+    /**
+     * Advance the live arms by `arm_steps` (the cheap part — runs every frame so
+     * the display stays smooth). Each arm is driven by its island's champion.
+     */
+    tick_arms(arm_steps: number): void;
+}
+
+/**
  * Station 2 — RuVector recognizes a changed arm and recalls its gain.
  */
 export class Recalibrator {
@@ -105,6 +142,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_freeswing_free: (a: number, b: number) => void;
+    readonly __wbg_population_free: (a: number, b: number) => void;
     readonly __wbg_recalibrator_free: (a: number, b: number) => void;
     readonly freeswing_energy: (a: number) => number;
     readonly freeswing_links: (a: number) => number;
@@ -113,6 +151,19 @@ export interface InitOutput {
     readonly freeswing_positions: (a: number) => [number, number];
     readonly freeswing_set_damping: (a: number, b: number) => void;
     readonly freeswing_step: (a: number, b: number) => void;
+    readonly population_best_island: (a: number) => number;
+    readonly population_evolve_islands: (a: number, b: number) => void;
+    readonly population_fitnesses: (a: number) => [number, number];
+    readonly population_generation: (a: number) => number;
+    readonly population_n_islands: (a: number) => number;
+    readonly population_new: (a: number) => number;
+    readonly population_positions_all: (a: number) => [number, number];
+    readonly population_restart: (a: number) => void;
+    readonly population_rollouts: (a: number) => number;
+    readonly population_set_sharing: (a: number, b: number) => void;
+    readonly population_sharing: (a: number) => number;
+    readonly population_take_migrated: (a: number) => number;
+    readonly population_tick_arms: (a: number, b: number) => void;
     readonly recalibrator_adaptive_positions: (a: number) => [number, number];
     readonly recalibrator_committed: (a: number) => number;
     readonly recalibrator_disturbed: (a: number) => number;

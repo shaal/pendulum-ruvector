@@ -3,9 +3,11 @@
   import init, { ruvector_smoke } from './wasm/pendulum_web.js'
   import Toy from './stations/Toy.svelte'
   import Recognize from './stations/Recognize.svelte'
+  import Crowd from './stations/Crowd.svelte'
 
   let ready = $state(false)
   let ruv = $state('starting…')
+  let tab = $state('toy')
 
   onMount(async () => {
     await init()
@@ -26,13 +28,17 @@
 </header>
 
 {#if ready}
-  <nav>
-    <a href="#toy">The toy</a>
-    <a href="#recognize">Recognize</a>
-    <span class="soon">recover · discover · compete · you vs RuVector — coming</span>
+  <nav class="tabs">
+    <button class:sel={tab === 'toy'} onclick={() => (tab = 'toy')}>The toy</button>
+    <button class:sel={tab === 'recognize'} onclick={() => (tab = 'recognize')}>Recognize</button>
+    <button class:sel={tab === 'compete'} onclick={() => (tab = 'compete')}>Compete</button>
+    <span class="soon">recover · discover · you vs RuVector — coming</span>
   </nav>
-  <Toy />
-  <Recognize />
+  <!-- All stations stay mounted (state persists), but only the active one runs
+       its simulation loop (each guards on its `active` prop). -->
+  <div class="pane" class:hidden={tab !== 'toy'}><Toy active={tab === 'toy'} /></div>
+  <div class="pane" class:hidden={tab !== 'recognize'}><Recognize active={tab === 'recognize'} /></div>
+  <div class="pane" class:hidden={tab !== 'compete'}><Crowd active={tab === 'compete'} /></div>
 {:else}
   <div class="boot">loading the physics…</div>
 {/if}
@@ -57,15 +63,19 @@
   .badge.on { color: var(--teal); box-shadow: inset 0 0 0 2px #99f6e4, var(--shadow); }
   .badge code { color: var(--teal); font-weight: 700; }
 
-  nav {
+  nav.tabs {
     display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center;
     margin: 0 auto 22px; font-weight: 700;
   }
-  nav a {
-    text-decoration: none; color: var(--teal); background: #fff; border-radius: 999px;
-    padding: 6px 14px; box-shadow: var(--shadow);
+  nav.tabs button {
+    color: var(--teal); background: #fff; border-radius: 999px;
+    padding: 8px 18px; box-shadow: var(--shadow); font-weight: 800;
   }
+  nav.tabs button:active { transform: translateY(1px); }
+  nav.tabs button.sel { background: var(--teal); color: #fff; box-shadow: inset 0 0 0 2px var(--teal); }
   nav .soon { color: var(--ink-soft); font-weight: 600; font-size: 0.82rem; }
+
+  .pane.hidden { display: none; }
 
   .boot { text-align: center; color: var(--ink-soft); padding: 60px 0; }
   footer { text-align: center; color: var(--ink-soft); font-size: 0.85rem; margin-top: 26px; line-height: 1.5; }

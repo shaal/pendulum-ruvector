@@ -4,6 +4,7 @@
   import { drawArm } from '../lib/render'
 
   const DT = 0.005
+  let { active = false }: { active?: boolean } = $props()
   let canvas: HTMLCanvasElement
   let links = $state(2)
   let damping = $state(0)
@@ -32,7 +33,10 @@
   }
   function frame(t: number) {
     requestAnimationFrame(frame)
-    if (!sim) return
+    if (!sim || !active) {
+      lastT = 0
+      return
+    }
     const dt = lastT ? Math.min((t - lastT) / 1000, 0.05) : 0
     lastT = t
     if (!paused) {

@@ -2,6 +2,7 @@
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
 export const __wbg_freeswing_free: (a: number, b: number) => void;
+export const __wbg_population_free: (a: number, b: number) => void;
 export const __wbg_recalibrator_free: (a: number, b: number) => void;
 export const freeswing_energy: (a: number) => number;
 export const freeswing_links: (a: number) => number;
@@ -10,6 +11,19 @@ export const freeswing_nudge: (a: number, b: number) => void;
 export const freeswing_positions: (a: number) => [number, number];
 export const freeswing_set_damping: (a: number, b: number) => void;
 export const freeswing_step: (a: number, b: number) => void;
+export const population_best_island: (a: number) => number;
+export const population_evolve_islands: (a: number, b: number) => void;
+export const population_fitnesses: (a: number) => [number, number];
+export const population_generation: (a: number) => number;
+export const population_n_islands: (a: number) => number;
+export const population_new: (a: number) => number;
+export const population_positions_all: (a: number) => [number, number];
+export const population_restart: (a: number) => void;
+export const population_rollouts: (a: number) => number;
+export const population_set_sharing: (a: number, b: number) => void;
+export const population_sharing: (a: number) => number;
+export const population_take_migrated: (a: number) => number;
+export const population_tick_arms: (a: number, b: number) => void;
 export const recalibrator_adaptive_positions: (a: number) => [number, number];
 export const recalibrator_committed: (a: number) => number;
 export const recalibrator_disturbed: (a: number) => number;

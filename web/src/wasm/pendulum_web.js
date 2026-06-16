@@ -82,6 +82,121 @@ export class FreeSwing {
 if (Symbol.dispose) FreeSwing.prototype[Symbol.dispose] = FreeSwing.prototype.free;
 
 /**
+ * Station 5 — a competing population that shares discoveries through RuVector.
+ */
+export class Population {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        PopulationFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_population_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    best_island() {
+        const ret = wasm.population_best_island(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Evolve `count` islands (round-robin), running the migration each time the
+     * sweep wraps. This is the heavy part — the caller throttles how often it runs
+     * so a generation is spread over several frames and never blocks rendering.
+     * @param {number} count
+     */
+    evolve_islands(count) {
+        wasm.population_evolve_islands(this.__wbg_ptr, count);
+    }
+    /**
+     * @returns {Float64Array}
+     */
+    fitnesses() {
+        const ret = wasm.population_fitnesses(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    generation() {
+        const ret = wasm.population_generation(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    n_islands() {
+        const ret = wasm.population_n_islands(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @param {boolean} sharing
+     */
+    constructor(sharing) {
+        const ret = wasm.population_new(sharing);
+        this.__wbg_ptr = ret;
+        PopulationFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Flat positions for every arm, concatenated: island 0's [x0,y0,x1,y1,x2,y2],
+     * then island 1's, … (3 points per 2-link arm).
+     * @returns {Float64Array}
+     */
+    positions_all() {
+        const ret = wasm.population_positions_all(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    restart() {
+        wasm.population_restart(this.__wbg_ptr);
+    }
+    /**
+     * @returns {number}
+     */
+    rollouts() {
+        const ret = wasm.population_rollouts(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @param {boolean} on
+     */
+    set_sharing(on) {
+        wasm.population_set_sharing(this.__wbg_ptr, on);
+    }
+    /**
+     * @returns {boolean}
+     */
+    sharing() {
+        const ret = wasm.population_sharing(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Read-and-clear the "a migration just happened" pulse (for the flash).
+     * @returns {boolean}
+     */
+    take_migrated() {
+        const ret = wasm.population_take_migrated(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Advance the live arms by `arm_steps` (the cheap part — runs every frame so
+     * the display stays smooth). Each arm is driven by its island's champion.
+     * @param {number} arm_steps
+     */
+    tick_arms(arm_steps) {
+        wasm.population_tick_arms(this.__wbg_ptr, arm_steps);
+    }
+}
+if (Symbol.dispose) Population.prototype[Symbol.dispose] = Population.prototype.free;
+
+/**
  * Station 2 — RuVector recognizes a changed arm and recalls its gain.
  */
 export class Recalibrator {
@@ -344,6 +459,9 @@ function __wbg_get_imports() {
 const FreeSwingFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_freeswing_free(ptr, 1));
+const PopulationFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_population_free(ptr, 1));
 const RecalibratorFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_recalibrator_free(ptr, 1));

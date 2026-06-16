@@ -11,8 +11,9 @@
 
 use wasm_bindgen::prelude::*;
 
-use pendulum_rs::control::{balance_gain, balance_torque, nominal_probe_gain, Vec4};
+use pendulum_rs::control::{balance_gain, balance_torque, nominal_probe_gain, upright_energy, Vec4};
 use pendulum_rs::estimator::{OnlineEstimator, Signature, SIG_DIM};
+use pendulum_rs::learn::{recover_torque_with_policy, EnergyShapingPolicy, PopulationSim, NP};
 use pendulum_rs::memory::ConfigMemory;
 use pendulum_rs::simulator::Pendulum;
 use ruvector_core::types::DbOptions;
@@ -450,5 +451,167 @@ impl Recalibrator {
     }
     pub fn encounter(&self) -> usize {
         self.encounter
+    }
+}
+
+// ───────────────────── Station: Compete (Stage 4 popviz) ────────────────────
+// A steppable port of `pendulum_rs/src/bin/popviz.rs`: a population of weak CEM
+// islands evolving swing-up policies, optionally sharing their best discovery
+// through RuVector. Each island drives one live arm with its current champion.
+// Evolution is sliced one island per frame so the browser stays smooth.
+
+const POP_N: usize = 8; // islands (= live arms)
+const POP_POP: usize = 6; // candidates per island generation
+const POP_CASES: usize = 3; // training knockdowns per fitness eval
+const POP_MIGRATE: usize = 3; // share/migrate every N generations
+const POP_SEED: u64 = 7;
+const POP_UMAX: f64 = 150.0;
+
+fn pop_arm() -> Pendulum {
+    let mut a = Pendulum::new(vec![1.0, 1.0], vec![1.0, 1.0], vec![0.05, 0.05], 9.81, DT);
+    a.reset(vec![0.1, -0.1], vec![0.0, 0.0]); // start from a dead hang
+    a
+}
+
+/// Station 5 — a competing population that shares discoveries through RuVector.
+#[wasm_bindgen]
+pub struct Population {
+    sim: PopulationSim,
+    arms: Vec<Pendulum>,
+    up_timer: Vec<f64>,
+    champions: Vec<[f64; NP]>,
+    k: Vec4,
+    e_up: f64,
+    cursor: usize,
+    rng: u64,
+    migrated_pulse: bool,
+}
+
+#[wasm_bindgen]
+impl Population {
+    #[wasm_bindgen(constructor)]
+    pub fn new(sharing: bool) -> Population {
+        let sim = PopulationSim::new(
+            POP_SEED, POP_N, POP_POP, POP_CASES, POP_MIGRATE, sharing, "popviz_pop.db",
+        );
+        let nominal = Pendulum::new(vec![1.0, 1.0], vec![1.0, 1.0], vec![0.05, 0.05], 9.81, DT);
+        let k = balance_gain(&nominal, DT);
+        let e_up = upright_energy(&nominal);
+        let champions = (0..sim.n_islands()).map(|i| sim.champion(i)).collect();
+        Population {
+            sim,
+            arms: (0..POP_N).map(|_| pop_arm()).collect(),
+            up_timer: vec![0.0; POP_N],
+            champions,
+            k,
+            e_up,
+            cursor: 0,
+            rng: 0xC0FFEE,
+            migrated_pulse: false,
+        }
+    }
+
+    fn next_rand(&mut self) -> f64 {
+        // splitmix64 → [0,1)
+        self.rng = self.rng.wrapping_add(0x9E3779B97F4A7C15);
+        let mut z = self.rng;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z ^= z >> 31;
+        (z >> 11) as f64 / ((1u64 << 53) as f64)
+    }
+
+    fn knock_down(&mut self, i: usize) {
+        let r0 = (self.next_rand() * 2.0 - 1.0) * PI;
+        let r1 = (self.next_rand() * 2.0 - 1.0) * PI;
+        self.arms[i].reset(vec![PI + r0, PI + r1], vec![0.0, 0.0]);
+    }
+
+    pub fn set_sharing(&mut self, on: bool) {
+        self.sim.set_sharing(on);
+    }
+
+    pub fn restart(&mut self) {
+        let sharing = self.sim.sharing();
+        *self = Population::new(sharing);
+    }
+
+    /// Advance the live arms by `arm_steps` (the cheap part — runs every frame so
+    /// the display stays smooth). Each arm is driven by its island's champion.
+    pub fn tick_arms(&mut self, arm_steps: usize) {
+        for i in 0..self.champions.len() {
+            self.champions[i] = self.sim.champion(i);
+        }
+        for _ in 0..arm_steps {
+            for i in 0..POP_N {
+                let policy = EnergyShapingPolicy { p: self.champions[i] };
+                let u = recover_torque_with_policy(&self.arms[i], &policy, &self.k, self.e_up, POP_UMAX);
+                self.arms[i].step(&[u, 0.0]);
+                let tip = tip_error(&self.arms[i]);
+                if tip < 0.3 {
+                    self.up_timer[i] += DT;
+                } else {
+                    self.up_timer[i] = 0.0;
+                }
+                if self.up_timer[i] > 1.5 {
+                    self.knock_down(i);
+                    self.up_timer[i] = 0.0;
+                }
+            }
+        }
+    }
+
+    /// Evolve `count` islands (round-robin), running the migration each time the
+    /// sweep wraps. This is the heavy part — the caller throttles how often it runs
+    /// so a generation is spread over several frames and never blocks rendering.
+    pub fn evolve_islands(&mut self, count: usize) {
+        for _ in 0..count {
+            self.sim.step_island(self.cursor);
+            self.cursor += 1;
+            if self.cursor >= self.sim.n_islands() {
+                self.cursor = 0;
+                if self.sim.finish_generation() {
+                    self.migrated_pulse = true;
+                }
+            }
+        }
+    }
+
+    /// Flat positions for every arm, concatenated: island 0's [x0,y0,x1,y1,x2,y2],
+    /// then island 1's, … (3 points per 2-link arm).
+    pub fn positions_all(&self) -> Vec<f64> {
+        let mut out = Vec::with_capacity(POP_N * 6);
+        for a in &self.arms {
+            for (x, y) in a.link_positions() {
+                out.push(x);
+                out.push(y);
+            }
+        }
+        out
+    }
+
+    pub fn fitnesses(&self) -> Vec<f64> {
+        (0..self.sim.n_islands()).map(|i| self.sim.fitness(i)).collect()
+    }
+    pub fn best_island(&self) -> usize {
+        self.sim.best_island()
+    }
+    pub fn generation(&self) -> usize {
+        self.sim.generation()
+    }
+    pub fn rollouts(&self) -> usize {
+        self.sim.total_rollouts()
+    }
+    pub fn n_islands(&self) -> usize {
+        POP_N
+    }
+    pub fn sharing(&self) -> bool {
+        self.sim.sharing()
+    }
+    /// Read-and-clear the "a migration just happened" pulse (for the flash).
+    pub fn take_migrated(&mut self) -> bool {
+        let m = self.migrated_pulse;
+        self.migrated_pulse = false;
+        m
     }
 }

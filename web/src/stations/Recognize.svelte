@@ -4,6 +4,7 @@
   import { drawDuel, RED, GREEN } from '../lib/render'
 
   const DT = 0.005
+  let { active = false }: { active?: boolean } = $props()
   let canvas: HTMLCanvasElement
   let newLen = $state(2.2)
   let learning = $state(true)
@@ -40,7 +41,10 @@
 
   function frame(t: number) {
     requestAnimationFrame(frame)
-    if (!sim) return
+    if (!sim || !active) {
+      lastT = 0
+      return
+    }
     const dt = lastT ? Math.min((t - lastT) / 1000, 0.05) : 0
     lastT = t
     if (!paused) {

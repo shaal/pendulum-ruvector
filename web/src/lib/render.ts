@@ -127,3 +127,78 @@ export function drawDuel(
   label(ctx, leftLabel, leftStyle.rod, w * 0.27, h - 14)
   label(ctx, rightLabel, rightStyle.rod, w * 0.73, h - 14)
 }
+
+// ---- population grid (the Compete station) ----
+function fitnessColor(f: number): string {
+  if (!isFinite(f)) return 'rgb(115,115,128)'
+  const t = Math.max(0, Math.min(1, (f + 60) / 160))
+  const r = Math.round(255 * (0.9 - 0.7 * t))
+  const g = Math.round(255 * (0.3 + 0.6 * t))
+  return `rgb(${r},${g},77)`
+}
+
+function paintArmSlice(
+  ctx: CanvasRenderingContext2D,
+  arr: ArrayLike<number>,
+  off: number,
+  ox: number,
+  oy: number,
+  scale: number,
+  color: string,
+) {
+  const sx = (x: number) => ox + x * scale
+  const sy = (y: number) => oy - y * scale
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.strokeStyle = color
+  ctx.lineWidth = 5
+  ctx.beginPath()
+  ctx.moveTo(sx(arr[off]), sy(arr[off + 1]))
+  ctx.lineTo(sx(arr[off + 2]), sy(arr[off + 3]))
+  ctx.lineTo(sx(arr[off + 4]), sy(arr[off + 5]))
+  ctx.stroke()
+  ctx.fillStyle = '#9a3412'
+  ctx.beginPath(); ctx.arc(sx(arr[off]), sy(arr[off + 1]), 3, 0, Math.PI * 2); ctx.fill()
+  ctx.fillStyle = color
+  ctx.beginPath(); ctx.arc(sx(arr[off + 2]), sy(arr[off + 3]), 4, 0, Math.PI * 2); ctx.fill()
+  ctx.beginPath(); ctx.arc(sx(arr[off + 4]), sy(arr[off + 5]), 5, 0, Math.PI * 2); ctx.fill()
+}
+
+/** Grid of live arms, one per island, coloured by fitness; gold box = best. */
+export function drawPopulation(
+  canvas: HTMLCanvasElement,
+  positionsAll: ArrayLike<number>,
+  n: number,
+  fitnesses: number[],
+  bestIsland: number,
+  flash: number,
+) {
+  const { ctx, w, h } = setup(canvas)
+  const cols = Math.min(4, n)
+  const rows = Math.ceil(n / cols)
+  const cw = w / cols
+  const ch = h / rows
+  const scale = (Math.min(cw, ch) * 0.32) / 2 // 2-link arm, reach ≈ 2 m
+  for (let i = 0; i < n; i++) {
+    const cellX = (i % cols) * cw
+    const cellY = Math.floor(i / cols) * ch
+    const ox = cellX + cw / 2
+    const oy = cellY + ch * 0.56
+    const fit = fitnesses[i]
+    const best = i === bestIsland && isFinite(fit)
+    if (best) {
+      ctx.strokeStyle = '#f59e0b'
+      ctx.lineWidth = 3
+      ctx.strokeRect(cellX + 3, cellY + 3, cw - 6, ch - 6)
+    }
+    paintArmSlice(ctx, positionsAll, i * 6, ox, oy, scale, fitnessColor(fit))
+    ctx.font = '700 12px ui-rounded, system-ui, sans-serif'
+    ctx.textAlign = 'left'
+    ctx.fillStyle = best ? '#b45309' : '#7c6a5b'
+    ctx.fillText(`island ${i} · fit ${isFinite(fit) ? fit.toFixed(0) : '…'}`, cellX + 8, cellY + 16)
+  }
+  if (flash > 0) {
+    ctx.fillStyle = `rgba(52,211,153,${Math.min(flash, 1) * 0.25})`
+    ctx.fillRect(0, 0, w, h)
+  }
+}

@@ -462,9 +462,24 @@ impl PopulationSim {
     /// Advance every island one generation; migrate if it's a sharing generation.
     /// Returns whether a migration happened this generation.
     pub fn step_generation(&mut self) -> bool {
-        for isl in &mut self.islands {
-            self.total_rollouts += isl.step(&self.cases, self.pop);
+        for i in 0..self.islands.len() {
+            self.step_island(i);
         }
+        self.finish_generation()
+    }
+
+    /// Advance a single island by one generation. Pairs with
+    /// [`Self::finish_generation`] for cooperative, frame-sliced stepping on a
+    /// single thread (e.g. the wasm/browser build): step one island per frame,
+    /// then run the migration once all islands have stepped.
+    pub fn step_island(&mut self, i: usize) {
+        self.total_rollouts += self.islands[i].step(&self.cases, self.pop);
+    }
+
+    /// Run the migration step (if this is a sharing generation) and advance the
+    /// generation counter. Call once after every island has been stepped.
+    /// Returns whether a migration happened.
+    pub fn finish_generation(&mut self) -> bool {
         self.migrated_last = false;
         if self.share && (self.generation + 1) % self.migrate_every == 0 {
             for isl in &self.islands {
