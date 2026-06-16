@@ -1,37 +1,42 @@
-//! Native test of the wasm `Population` handle (the Compete / popviz station):
-//! the frame-sliced evolution must actually advance generations and produce a
-//! champion per island, and the per-arm render buffer must have the right shape.
+//! Native test of the Compete-station handles. `Evolver` (worker side) must
+//! advance generations and produce a champion per island; `PopArms` (main side)
+//! must drive the display arms from those champions and produce a well-formed
+//! render buffer.
 
-use pendulum_web::Population;
+use pendulum_web::{Evolver, PopArms};
 
 #[test]
 fn population_evolves_and_renders() {
-    let mut p = Population::new(true);
-    let n = p.n_islands();
+    let mut ev = Evolver::new(true);
+    let n = ev.n_islands();
     assert!(n >= 4, "expected several islands, got {n}");
-    assert_eq!(p.positions_all().len(), n * 6, "6 floats per 2-link arm (3 points)");
 
-    let g0 = p.generation();
-    // One island is evolved per evolve_islands(1), so ~6 generations needs ~6n calls.
+    let g0 = ev.generation();
+    // One island per evolve_islands(1); ~6 generations needs ~6n calls.
     for _ in 0..(n * 6) {
-        p.tick_arms(2);
-        p.evolve_islands(1);
+        ev.evolve_islands(1);
     }
+    assert!(ev.generation() > g0, "generations should advance: {g0} -> {}", ev.generation());
+    assert!(ev.rollouts() > 0, "rollouts should be counted");
 
-    assert!(p.generation() > g0, "generations should advance: {g0} -> {}", p.generation());
-    assert!(p.rollouts() > 0, "rollouts should be counted");
-
-    let fits = p.fitnesses();
+    let fits = ev.fitnesses();
     assert_eq!(fits.len(), n);
     assert!(fits.iter().all(|f| f.is_finite()), "every island should have a champion fitness");
-    assert!(p.best_island() < n, "best island in range");
-    assert_eq!(p.positions_all().len(), n * 6, "render buffer stays well-formed");
+    assert!(ev.best_island() < n, "best island in range");
+
+    let champions = ev.champions_flat();
+    assert_eq!(champions.len(), n * pendulum_web::np(), "n_islands * NP champion params");
+
+    let mut arms = PopArms::new();
+    assert_eq!(arms.positions_all().len(), n * 6, "6 floats per 2-link arm");
+    arms.tick(5, &champions);
+    assert_eq!(arms.positions_all().len(), n * 6, "render buffer stays well-formed");
 }
 
 #[test]
 fn sharing_toggle_is_respected() {
-    let mut p = Population::new(false);
-    assert!(!p.sharing());
-    p.set_sharing(true);
-    assert!(p.sharing());
+    let mut ev = Evolver::new(false);
+    assert!(!ev.sharing());
+    ev.set_sharing(true);
+    assert!(ev.sharing());
 }

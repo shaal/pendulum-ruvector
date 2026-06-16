@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { Population } from '../wasm/pendulum_web.js'
+  import { onMount, onDestroy } from 'svelte'
+  import { PopArms } from '../wasm/pendulum_web.js'
   import { drawPopulation } from '../lib/render'
+  import PopWorker from '../lib/popWorker.ts?worker'
 
   const DT = 0.005
   let { active = false }: { active?: boolean } = $props()
@@ -9,31 +10,26 @@
   let sharing = $state(true)
   let paused = $state(false)
   let showDeep = $state(false)
-
   let gen = $state(0)
   let rollouts = $state(0)
-  let bestFit = $state(0)
 
-  let sim: Population | null = null
+  let arms: PopArms | null = null
+  // `worker` is reactive so the run/pause effect fires once it's created (avoids a
+  // startup race where the effect runs before onMount and never sees the worker).
+  let worker: Worker | null = $state(null)
+  // Latest snapshot from the worker (champions drive the arms; the rest is HUD).
+  let champions = new Float64Array(0)
+  let fitnesses: number[] = []
+  let bestIsland = 0
+  let nIslands = 8
   let flash = 0
   let acc = 0
   let lastT = 0
-  let evo = 0
-
-  function rebuild() {
-    sim?.free()
-    sim = new Population(sharing)
-    acc = 0
-    flash = 0
-  }
-  function toggleSharing() {
-    sharing = !sharing
-    sim?.set_sharing(sharing)
-  }
+  let raf = 0
 
   function frame(t: number) {
-    requestAnimationFrame(frame)
-    if (!sim || !active) {
+    raf = requestAnimationFrame(frame)
+    if (!arms || !active) {
       lastT = 0
       return
     }
@@ -43,27 +39,58 @@
       acc += dt
       const want = Math.floor(acc / DT)
       if (want > 0) {
-        sim.tick_arms(Math.min(want, 20)) // arms every frame (cheap, smooth)
+        arms.tick(Math.min(want, 20), champions)
         acc -= want * DT
         if (acc < 0) acc = 0
       }
-      // evolution is heavy — one island every other frame, decoupled from rendering
-      evo++
-      if (evo % 2 === 0) sim.evolve_islands(1)
-      if (sim.take_migrated()) flash = 0.6
       if (flash > 0) flash -= dt
     }
-    const fits = Array.from(sim.fitnesses())
-    drawPopulation(canvas, sim.positions_all(), sim.n_islands(), fits, sim.best_island(), flash)
-    gen = sim.generation()
-    rollouts = sim.rollouts()
-    bestFit = fits.reduce((a, b) => (isFinite(b) && b > a ? b : a), -Infinity)
+    drawPopulation(canvas, arms.positions_all(), nIslands, fitnesses, bestIsland, flash)
   }
 
-  onMount(() => {
-    rebuild()
-    requestAnimationFrame(frame)
+  // Tell the worker to run only when this tab is active and not paused (so it
+  // doesn't peg a core in the background on other tabs).
+  $effect(() => {
+    worker?.postMessage({ cmd: active && !paused ? 'run' : 'pause' })
   })
+
+  onMount(() => {
+    arms = new PopArms()
+    nIslands = arms.n_islands()
+    const w = new PopWorker()
+    w.onerror = (e) => console.error('popWorker onerror:', e.message, e.filename, e.lineno)
+    w.onmessage = (e: MessageEvent) => {
+      const d = e.data
+      if (d.error) {
+        console.error('popWorker:', d.error)
+        return
+      }
+      champions = d.champions
+      fitnesses = Array.from(d.fitnesses as Float64Array)
+      bestIsland = d.bestIsland
+      nIslands = d.nIslands
+      gen = d.generation
+      rollouts = d.rollouts
+      if (d.migrated) flash = 0.6
+    }
+    w.postMessage({ cmd: 'start', sharing })
+    worker = w // assigning the reactive var fires the run/pause effect
+    raf = requestAnimationFrame(frame)
+  })
+
+  onDestroy(() => {
+    cancelAnimationFrame(raf)
+    worker?.terminate()
+    arms?.free()
+  })
+
+  function toggleSharing() {
+    sharing = !sharing
+    worker?.postMessage({ cmd: 'sharing', on: sharing })
+  }
+  function restart() {
+    worker?.postMessage({ cmd: 'restart' })
+  }
 </script>
 
 <section class="station" id="compete">
@@ -97,7 +124,7 @@
       </div>
       <div class="group buttons">
         <button class="ghost" onclick={() => (paused = !paused)}>{paused ? '▶ play' : '⏸ pause'}</button>
-        <button class="ghost" onclick={rebuild}>↺ restart</button>
+        <button class="ghost" onclick={restart}>↺ restart</button>
       </div>
     </div>
 
@@ -108,26 +135,24 @@
       <div class="deep">
         <p>
           Each island runs a gradient-free <strong>cross-entropy method</strong>: it samples a
-          population of candidate swing-up policies (a linear energy-shaping controller,
-          <code>EnergyShapingPolicy</code>), scores each over several knockdown starts, keeps the
-          elite, and re-fits its sampling distribution toward them. The islands are deliberately
-          weak (small populations) so the effect of sharing is visible.
+          population of candidate swing-up policies (<code>EnergyShapingPolicy</code>), scores each
+          over several knockdown starts, keeps the elite, and re-fits its sampling distribution
+          toward them. The islands are deliberately weak so the effect of sharing is visible.
         </p>
         <p>
           <strong>Sharing is RuVector-mediated migration.</strong> Every <code>migrate_every</code>
           generations each island inserts its champion (parameters as the vector, fitness in the
-          payload) into a shared <code>SharedPolicyStore</code> (a RuVector
-          <code>VectorDB</code>); it then reads the global best back and, if that beats its own,
-          adopts it and re-widens to explore around it. Without sharing the islands are independent
-          (same seed — sharing is the only difference). Native benchmarks show RuVector-mediated
-          sharing reaches population-wide competence in up to ~80% fewer total rollouts; the test
-          <code>ruvector_sharing_accelerates_the_population</code> pins it.
+          payload) into a shared <code>SharedPolicyStore</code> (a RuVector <code>VectorDB</code>);
+          it reads the global best back and, if it beats its own, adopts it and re-widens. Native
+          benchmarks show this reaches population-wide competence in up to ~80% fewer total
+          rollouts (test <code>ruvector_sharing_accelerates_the_population</code>).
         </p>
         <p>
-          In the browser the evolution is sliced one island per animation frame
-          (<code>step_island</code> / <code>finish_generation</code>) so the live arms stay smooth
-          while the population improves in the background — the single-threaded analogue of the
-          native build's background evolution thread.
+          <strong>Why it's now smooth.</strong> The evolution runs on a <strong>Web Worker</strong>
+          (a real background CPU thread): it evolves continuously and publishes champion snapshots,
+          while this thread only steps the live arms from those champions and draws them. So the
+          render stays at 60&nbsp;fps no matter how heavy the search gets — the browser analogue of
+          the native build's background evolution thread.
         </p>
       </div>
     {/if}

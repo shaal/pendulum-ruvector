@@ -1,6 +1,110 @@
 /* @ts-self-types="./pendulum_web.d.ts" */
 
 /**
+ * Worker-side: the evolving population (no display arms).
+ */
+export class Evolver {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        EvolverFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_evolver_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    best_island() {
+        const ret = wasm.evolver_best_island(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Flat champion parameters for every island (`n_islands * NP`) — what the main
+     * thread needs to drive its display arms.
+     * @returns {Float64Array}
+     */
+    champions_flat() {
+        const ret = wasm.evolver_champions_flat(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * Evolve `count` islands (round-robin); migrate when the sweep wraps.
+     * @param {number} count
+     */
+    evolve_islands(count) {
+        wasm.evolver_evolve_islands(this.__wbg_ptr, count);
+    }
+    /**
+     * @returns {Float64Array}
+     */
+    fitnesses() {
+        const ret = wasm.evolver_fitnesses(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    generation() {
+        const ret = wasm.evolver_generation(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    n_islands() {
+        const ret = wasm.evolver_n_islands(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @param {boolean} sharing
+     */
+    constructor(sharing) {
+        const ret = wasm.evolver_new(sharing);
+        this.__wbg_ptr = ret;
+        EvolverFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    restart() {
+        wasm.evolver_restart(this.__wbg_ptr);
+    }
+    /**
+     * @returns {number}
+     */
+    rollouts() {
+        const ret = wasm.evolver_rollouts(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @param {boolean} on
+     */
+    set_sharing(on) {
+        wasm.evolver_set_sharing(this.__wbg_ptr, on);
+    }
+    /**
+     * @returns {boolean}
+     */
+    sharing() {
+        const ret = wasm.evolver_sharing(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    take_migrated() {
+        const ret = wasm.evolver_take_migrated(this.__wbg_ptr);
+        return ret !== 0;
+    }
+}
+if (Symbol.dispose) Evolver.prototype[Symbol.dispose] = Evolver.prototype.free;
+
+/**
  * Station 0 — a free-swinging n-link pendulum. Released from a sprawl and left
  * passive (no applied torque), it swings chaotically: the warm-up that motivates
  * why remembering past dynamics (RuVector) is worth anything.
@@ -82,119 +186,56 @@ export class FreeSwing {
 if (Symbol.dispose) FreeSwing.prototype[Symbol.dispose] = FreeSwing.prototype.free;
 
 /**
- * Station 5 — a competing population that shares discoveries through RuVector.
+ * Main-thread: the live display arms, driven by champion parameters from the
+ * worker. Cheap enough to step every frame.
  */
-export class Population {
+export class PopArms {
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
-        PopulationFinalization.unregister(this);
+        PopArmsFinalization.unregister(this);
         return ptr;
     }
     free() {
         const ptr = this.__destroy_into_raw();
-        wasm.__wbg_population_free(ptr, 0);
-    }
-    /**
-     * @returns {number}
-     */
-    best_island() {
-        const ret = wasm.population_best_island(this.__wbg_ptr);
-        return ret >>> 0;
-    }
-    /**
-     * Evolve `count` islands (round-robin), running the migration each time the
-     * sweep wraps. This is the heavy part — the caller throttles how often it runs
-     * so a generation is spread over several frames and never blocks rendering.
-     * @param {number} count
-     */
-    evolve_islands(count) {
-        wasm.population_evolve_islands(this.__wbg_ptr, count);
-    }
-    /**
-     * @returns {Float64Array}
-     */
-    fitnesses() {
-        const ret = wasm.population_fitnesses(this.__wbg_ptr);
-        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
-        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
-        return v1;
-    }
-    /**
-     * @returns {number}
-     */
-    generation() {
-        const ret = wasm.population_generation(this.__wbg_ptr);
-        return ret >>> 0;
+        wasm.__wbg_poparms_free(ptr, 0);
     }
     /**
      * @returns {number}
      */
     n_islands() {
-        const ret = wasm.population_n_islands(this.__wbg_ptr);
+        const ret = wasm.poparms_n_islands(this.__wbg_ptr);
         return ret >>> 0;
     }
-    /**
-     * @param {boolean} sharing
-     */
-    constructor(sharing) {
-        const ret = wasm.population_new(sharing);
+    constructor() {
+        const ret = wasm.poparms_new();
         this.__wbg_ptr = ret;
-        PopulationFinalization.register(this, this.__wbg_ptr, this);
+        PopArmsFinalization.register(this, this.__wbg_ptr, this);
         return this;
     }
     /**
-     * Flat positions for every arm, concatenated: island 0's [x0,y0,x1,y1,x2,y2],
-     * then island 1's, … (3 points per 2-link arm).
+     * Flat positions for every arm: island 0's `[x0,y0,x1,y1,x2,y2]`, then 1's, …
      * @returns {Float64Array}
      */
     positions_all() {
-        const ret = wasm.population_positions_all(this.__wbg_ptr);
+        const ret = wasm.poparms_positions_all(this.__wbg_ptr);
         var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
         return v1;
     }
-    restart() {
-        wasm.population_restart(this.__wbg_ptr);
-    }
     /**
-     * @returns {number}
+     * Step every arm `steps` times, driven by its island's champion. `champions`
+     * is the flat `n_islands * NP` array from `Evolver::champions_flat`.
+     * @param {number} steps
+     * @param {Float64Array} champions
      */
-    rollouts() {
-        const ret = wasm.population_rollouts(this.__wbg_ptr);
-        return ret >>> 0;
-    }
-    /**
-     * @param {boolean} on
-     */
-    set_sharing(on) {
-        wasm.population_set_sharing(this.__wbg_ptr, on);
-    }
-    /**
-     * @returns {boolean}
-     */
-    sharing() {
-        const ret = wasm.population_sharing(this.__wbg_ptr);
-        return ret !== 0;
-    }
-    /**
-     * Read-and-clear the "a migration just happened" pulse (for the flash).
-     * @returns {boolean}
-     */
-    take_migrated() {
-        const ret = wasm.population_take_migrated(this.__wbg_ptr);
-        return ret !== 0;
-    }
-    /**
-     * Advance the live arms by `arm_steps` (the cheap part — runs every frame so
-     * the display stays smooth). Each arm is driven by its island's champion.
-     * @param {number} arm_steps
-     */
-    tick_arms(arm_steps) {
-        wasm.population_tick_arms(this.__wbg_ptr, arm_steps);
+    tick(steps, champions) {
+        const ptr0 = passArrayF64ToWasm0(champions, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.poparms_tick(this.__wbg_ptr, steps, ptr0, len0);
     }
 }
-if (Symbol.dispose) Population.prototype[Symbol.dispose] = Population.prototype.free;
+if (Symbol.dispose) PopArms.prototype[Symbol.dispose] = PopArms.prototype.free;
 
 /**
  * Station 2 — RuVector recognizes a changed arm and recalls its gain.
@@ -390,6 +431,16 @@ export class Recalibrator {
 if (Symbol.dispose) Recalibrator.prototype[Symbol.dispose] = Recalibrator.prototype.free;
 
 /**
+ * Number of evolvable policy parameters per island champion (the stride of
+ * `Evolver::champions_flat`).
+ * @returns {number}
+ */
+export function np() {
+    const ret = wasm.np();
+    return ret >>> 0;
+}
+
+/**
  * Proof that RuVector's in-memory vector DB runs in the browser. Creates a tiny
  * in-memory store, inserts two vectors, and returns the id of the nearest match
  * to a query — entirely client-side, no server. Also keeps `ruvector-core` linked
@@ -456,12 +507,15 @@ function __wbg_get_imports() {
     };
 }
 
+const EvolverFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_evolver_free(ptr, 1));
 const FreeSwingFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_freeswing_free(ptr, 1));
-const PopulationFinalization = (typeof FinalizationRegistry === 'undefined')
+const PopArmsFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
-    : new FinalizationRegistry(ptr => wasm.__wbg_population_free(ptr, 1));
+    : new FinalizationRegistry(ptr => wasm.__wbg_poparms_free(ptr, 1));
 const RecalibratorFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_recalibrator_free(ptr, 1));
@@ -497,6 +551,13 @@ function getUint8ArrayMemory0() {
         cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
     }
     return cachedUint8ArrayMemory0;
+}
+
+function passArrayF64ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 8, 8) >>> 0;
+    getFloat64ArrayMemory0().set(arg, ptr / 8);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {
