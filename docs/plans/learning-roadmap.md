@@ -101,9 +101,20 @@ equilibrium: `[π,π]` (both up, 7/10) and `[π,0]` (link-1 up, link-2 dangling,
 4/10; the dead-hang case is solid). Reachable goals are exactly `{θ₀ free} ×
 {θ₁ ∈ {0,π}}` (link 2 must be gravity-balanced — joint 1 is passive). Tests:
 `reaches_link1_up_link2_down_goal`, `swings_up_from_a_dead_hang`. `check` prints
-both goals. **Honest gap:** `[π,0]` recovers less reliably because the energy-pump
-swing-up aims at *energy*, not the goal *posture* — a posture-aware swing-up
-(Stage 3.5) would close it; goal-conditioned *energy*/spin targets are also open.
+both goals. Posture handled in Stage 3.5 (below); goal-conditioned *energy*/spin targets
+remain open.
+
+### Stage 3.5 — Posture-aware swing-up *(shipped; clean win)*
+The energy pump reached the goal *energy* but not its *posture*, so `[π,0]` only
+caught 4/10. Diagnosis: 3 of 6 failures never reached the basin, 3 reached it but
+arrived too fast to catch — so the fix needs *both* posture and damping.
+`swingup_to(goal)` blends `v = k_e·(E_goal−E)·ω₀ − k_p·(θ₀−goal₀) − k_d·ω₀`. The
+crux is a **goal-dependent** posture gain `k_p = 3·(1 + cos θ₁_goal)` — **0 when
+link 2's target is up** (energy already pins posture; posture only fights — this
+is the Stage-1 finding) **and 6 when it's down** (energy is ambiguous, posture is
+essential). Result: **`[π,0]` 4/10 → 7/10 and `[π,π]` 7/10 → 8/10** — both
+improved, no regression. Tests: `goal_conditioned_recovery_rates`. `swingup_pfl`
+(the evolved-policy rollout pump) is left untouched.
 
 ### Stage 4 — Live competing population (optional, ambitious)
 Many agents run concurrently, each on randomized conditions, **sharing

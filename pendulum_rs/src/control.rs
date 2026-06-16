@@ -283,6 +283,34 @@ pub fn swingup_pfl(sim: &Pendulum, e_up: f64, u_max: f64) -> f64 {
     (m_bar * v + h_bar).clamp(-u_max, u_max)
 }
 
+/// **Posture-aware** collocated swing-up toward an arbitrary goal. The pure
+/// energy pump ([`swingup_pfl`]) reaches the goal *energy* but not its *posture*,
+/// so non-upright goals (e.g. `[π,0]`) are missed. Here `v` blends three terms:
+///
+/// ```text
+/// v = k_e·(E_goal − E)·ω₀   (pump energy toward the goal total)
+///     − k_p·wrap(θ₀ − goal₀) (drive link 1 toward the goal angle)
+///     − k_d·ω₀               (brake so it arrives gently enough for the catch)
+/// ```
+///
+/// The posture gain is **goal-dependent** and that is the crux: posture only
+/// helps when the goal *energy* doesn't pin the *posture*. For an upright link 2
+/// (θ₁_goal = π, max energy) the energy pump alone already lands near the target,
+/// so posture just fights it — `k_p → 0`. For a dangling link 2 (θ₁_goal = 0)
+/// many configs share the goal energy, so posture is essential — `k_p → 6`. The
+/// rule `k_p = 3·(1 + cos θ₁_goal)` interpolates, with light damping always on
+/// (it even lifts the upright case from 7/10 to 8/10). Empirically this gives
+/// `[π,π]` 8/10 *and* `[π,0]` 7/10 — both ≥ the energy-only pump's 7/10.
+pub fn swingup_to(sim: &Pendulum, goal: &[f64], e_goal: f64, u_max: f64) -> f64 {
+    let (m_bar, h_bar) = collocated_pfl(sim);
+    let e0 = wrap(sim.theta[0] - goal[0]);
+    let k_e = 20.0;
+    let k_p = 3.0 * (1.0 + goal[1].cos()); // 0 when link-2 target is up, 6 when down
+    let k_d = 1.0;
+    let v = k_e * (e_goal - sim.total_energy()) * sim.omega[0] - k_p * e0 - k_d * sim.omega[0];
+    (m_bar * v + h_bar).clamp(-u_max, u_max)
+}
+
 /// Collocated partial-feedback-linearization terms `(M̄, h̄)` at the current
 /// state, such that the joint-0 torque `u = M̄·v + h̄` realizes the commanded
 /// actuated acceleration `q̈₀ = v` (the passive joint follows). Shared by the
@@ -335,7 +363,7 @@ pub fn recover_to(sim: &Pendulum, goal: &[f64], k: &Vec4, e_goal: f64, u_max: f6
         let u_eq = equilibrium_torque(sim, goal);
         goal_balance_torque(k, &sim.theta, &sim.omega, goal, u_eq, u_max)
     } else {
-        swingup_pfl(sim, e_goal, u_max)
+        swingup_to(sim, goal, e_goal, u_max)
     }
 }
 
@@ -418,5 +446,33 @@ mod tests {
         }
         let err = wrap(sim.theta[0] - goal[0]).abs() + wrap(sim.theta[1] - goal[1]).abs();
         assert!(err < 0.25, "should reach link1-up/link2-down [π,0], error {err:.3}");
+    }
+
+    /// Stage 3.5: the goal-dependent posture-aware swing-up recovers BOTH goals
+    /// reliably — `[π,π]` ≥ its prior 7/10, and `[π,0]` lifted well above the
+    /// energy-only pump's 4/10 — from the canonical knockdown starts.
+    #[test]
+    fn goal_conditioned_recovery_rates() {
+        let dt = 0.005;
+        let count = |goal: [f64; 2]| -> usize {
+            crate::learn::knockdown_starts()
+                .iter()
+                .filter(|(_, theta0)| {
+                    let mut sim = Pendulum::new(vec![1.0, 1.0], vec![1.0, 1.0], vec![0.05, 0.05], 9.81, dt);
+                    sim.reset(theta0.clone(), vec![0.0, 0.0]);
+                    let k = balance_gain_for(&sim, &goal, dt);
+                    let e_goal = energy_at(&sim, &goal);
+                    for _ in 0..(15.0 / dt) as usize {
+                        let u = recover_to(&sim, &goal, &k, e_goal, 150.0);
+                        sim.step(&[u, 0.0]);
+                    }
+                    wrap(sim.theta[0] - goal[0]).abs() + wrap(sim.theta[1] - goal[1]).abs() < 0.2
+                })
+                .count()
+        };
+        let up = count([PI, PI]);
+        let dangle = count([PI, 0.0]);
+        assert!(up >= 7, "[π,π] should recover ≥7/10, got {up}");
+        assert!(dangle >= 6, "[π,0] posture-aware should recover ≥6/10 (was 4), got {dangle}");
     }
 }
