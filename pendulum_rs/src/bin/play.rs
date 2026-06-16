@@ -10,7 +10,14 @@
 //! Press **SPACE** to fire a disturbance (both arms' second link extends): watch
 //! the auto arm recover while you fight to keep yours up. **R** resets.
 //!
-//!   cargo run --release --features game --bin play
+//!   cargo run --release --features game --bin play                 # oracle recalibration
+//!   cargo run --release --features "game vectordb" --bin play      # LIVE RuVector recognition
+//!
+//! With `vectordb` the auto arm earns its recalibration: on the length
+//! disturbance it runs a short dithered recognition probe, identifies its new
+//! dynamics signature, and recalls the matching gain from a seeded RuVector
+//! store (the Phase-2 pipeline, live in the game). Without it, it uses the
+//! oracle for an instant gain.
 //!
 //! Note: balancing an underactuated double pendulum by hand is *hard* — that's
 //! the point. RuVector makes it look easy.
@@ -20,11 +27,137 @@ use pendulum_rs::control::{balance_gain, recover_torque, upright_energy, Vec4};
 use pendulum_rs::simulator::Pendulum;
 use std::f64::consts::PI;
 
+#[cfg(feature = "vectordb")]
+use pendulum_rs::estimator::{OnlineEstimator, Signature};
+#[cfg(feature = "vectordb")]
+use pendulum_rs::memory::ConfigMemory;
+
 const DT: f64 = 0.004;
 const U_MAX: f64 = 150.0;
 const HUMAN_TORQUE: f64 = 90.0; // torque you apply per key hold
 const SCALE: f32 = 90.0; // pixels per meter
 const NEW_LEN: f64 = 2.0;
+
+/// Live RuVector recognition for the in-game length disturbance (Phase 2,
+/// wired into the duel). Seeds a config grid once, then on a disturbance runs a
+/// dithered probe on the auto arm, identifies its signature, and recalls the
+/// matching gain — replacing the oracle.
+#[cfg(feature = "vectordb")]
+struct Recognizer {
+    mem: ConfigMemory,
+    est: OnlineEstimator,
+    k_probe: Vec4,
+    active: bool,
+    t_start: f64,
+    smoothed: Option<Signature>,
+    /// Human-readable status for the HUD.
+    status: String,
+    /// Recognition lag once committed (seconds from disturbance to adoption).
+    lag: Option<f64>,
+}
+
+#[cfg(feature = "vectordb")]
+impl Recognizer {
+    // Probe tuning mirrors the `estimate` binary.
+    const MIN_SAMPLES: usize = 25;
+    const FREEZE_TIP: f64 = 0.18;
+    const EMA: f64 = 0.5;
+    const COMMIT: f32 = 5.0; // whitened-L2 distance under which we adopt the recall
+    const TIMEOUT: f64 = 0.9; // give up to the oracle if not recognized by then
+
+    fn new() -> Self {
+        let mut mem = ConfigMemory::new("play_configs.db").expect("open RuVector store");
+        mem.seed_grid().expect("seed config grid");
+        // Probe with the *seed's* gain (built at the memory's seed dt), not one
+        // recomputed at the game's control dt — the signature must match.
+        let k_probe = mem.probe_gain();
+        Recognizer {
+            mem,
+            est: OnlineEstimator::new(240, 1e-4),
+            k_probe,
+            active: false,
+            t_start: 0.0,
+            smoothed: None,
+            status: String::new(),
+            lag: None,
+        }
+    }
+
+    fn start(&mut self, t: f64) {
+        self.active = true;
+        self.t_start = t;
+        self.est.clear();
+        self.smoothed = None;
+        self.status = "RECOGNIZING…".to_string();
+        self.lag = None;
+    }
+
+    /// Probe torque while recognizing: the stale gain plus an exogenous dither.
+    fn probe_torque(&self, auto: &Pendulum, t: f64) -> (f64, f64) {
+        let e0 = (auto.theta[0] - PI + PI).rem_euclid(2.0 * PI) - PI;
+        let e1 = (auto.theta[1] - PI + PI).rem_euclid(2.0 * PI) - PI;
+        let k = &self.k_probe;
+        let u_fb = -(k[0] * e0 + k[1] * e1 + k[2] * auto.omega[0] + k[3] * auto.omega[1]);
+        let dither = 6.0 * (2.0 * PI * 1.7 * t).sin() + 4.0 * (2.0 * PI * 3.3 * t).sin();
+        ((u_fb + dither).clamp(-U_MAX, U_MAX), dither)
+    }
+
+    /// Record one probe step and try to commit a recall. On success it adopts
+    /// the recalled gain into `k_auto`/`e_up` and ends the probe; on timeout it
+    /// falls back to the oracle so the arm never just gives up.
+    #[allow(clippy::too_many_arguments)]
+    fn observe(
+        &mut self,
+        theta_before: &[f64],
+        omega_before: &[f64],
+        dither: f64,
+        omega_after: &[f64],
+        t: f64,
+        auto: &Pendulum,
+        k_auto: &mut Vec4,
+        e_up: &mut f64,
+    ) {
+        let tip = {
+            let w = |a: f64| (a + PI).rem_euclid(2.0 * PI) - PI;
+            w(theta_before[0] - PI).abs() + w(theta_before[1] - PI).abs()
+        };
+        if tip < Self::FREEZE_TIP {
+            self.est.observe(theta_before, omega_before, dither, omega_after, DT);
+        }
+        if self.est.len() >= Self::MIN_SAMPLES {
+            if let Some(raw) = self.est.estimate() {
+                let sig: Signature = match self.smoothed {
+                    Some(prev) => {
+                        let s = std::array::from_fn(|i| Self::EMA * raw[i] + (1.0 - Self::EMA) * prev[i]);
+                        self.smoothed = Some(s);
+                        s
+                    }
+                    None => {
+                        self.smoothed = Some(raw);
+                        raw
+                    }
+                };
+                if let Ok(Some(rc)) = self.mem.recall(&sig) {
+                    if rc.score < Self::COMMIT {
+                        *k_auto = rc.k;
+                        *e_up = rc.e_up;
+                        self.lag = Some(t - self.t_start);
+                        self.status = format!("RECALLED l1≈{:.1}m in {:.2}s", rc.l1, t - self.t_start);
+                        self.active = false;
+                        return;
+                    }
+                }
+            }
+        }
+        if t - self.t_start > Self::TIMEOUT {
+            // Couldn't recognize in time — fall back to the oracle.
+            *k_auto = balance_gain(auto, DT);
+            *e_up = upright_energy(auto);
+            self.status = "recognition timed out → oracle".to_string();
+            self.active = false;
+        }
+    }
+}
 
 struct Game {
     you: Pendulum,
@@ -37,6 +170,8 @@ struct Game {
     you_balanced: f64,  // total time you've kept it up
     auto_up: bool,
     auto_wind_on: bool,
+    #[cfg(feature = "vectordb")]
+    recog: Recognizer,
 }
 
 fn fresh_arm() -> Pendulum {
@@ -63,6 +198,8 @@ impl Game {
             you_balanced: 0.0,
             auto_up: true,
             auto_wind_on: false,
+            #[cfg(feature = "vectordb")]
+            recog: Recognizer::new(),
         }
     }
 
@@ -77,11 +214,18 @@ impl Game {
         }
         self.you.set_length(1, NEW_LEN);
         self.auto.set_length(1, NEW_LEN);
-        // The auto arm recalibrates. Here it uses the oracle for an instant,
-        // jitter-free gain; the `estimate` demo shows the same recalibration done
-        // by RuVector recognition (Phase 2) and GNN interpolation (Phase 3).
-        self.k_auto = balance_gain(&self.auto, DT);
         self.e_up = upright_energy(&self.auto);
+        // With RuVector: kick off a live recognition probe (the auto arm keeps
+        // its stale gain while it identifies the new arm, then adopts the recall).
+        // Without it: the oracle hands over an instant gain.
+        #[cfg(feature = "vectordb")]
+        {
+            self.recog.start(self.t);
+        }
+        #[cfg(not(feature = "vectordb"))]
+        {
+            self.k_auto = balance_gain(&self.auto, DT);
+        }
         self.disturbed = true;
     }
 
@@ -99,6 +243,34 @@ impl Game {
         // knocked further out. It now hoists itself back up from most full
         // knockdowns, including a dead hang (≈7/10 of the `check` harness starts);
         // a few worst-case configurations still defeat it (chaotic, unsolved).
+        //
+        // While a RuVector recognition probe is active, the auto arm runs the
+        // dithered probe controller and identifies its new gain instead of
+        // balancing; once it commits (or times out) it returns to recover_torque.
+        #[cfg(feature = "vectordb")]
+        if self.recog.active {
+            let theta_before = self.auto.theta.clone();
+            let omega_before = self.auto.omega.clone();
+            let (u, dither) = self.recog.probe_torque(&self.auto, self.t);
+            self.auto.step(&[u, 0.0]);
+            let omega_after = self.auto.omega.clone();
+            // Disjoint field borrows: `recog` (mut), `auto` (shared), `k_auto`/
+            // `e_up` (mut) are distinct fields of `self`, so this is allowed.
+            self.recog.observe(
+                &theta_before,
+                &omega_before,
+                dither,
+                &omega_after,
+                self.t,
+                &self.auto,
+                &mut self.k_auto,
+                &mut self.e_up,
+            );
+            self.auto_up = Self::tip_error(&self.auto) < 1.4;
+            self.t += DT;
+            return;
+        }
+
         let u = recover_torque(&self.auto, &self.k_auto, self.e_up, U_MAX);
         self.auto.step(&[u, 0.0]);
         self.auto_up = Self::tip_error(&self.auto) < 1.4;
@@ -214,6 +386,12 @@ async fn main() {
         );
         draw_text("RuVector  (auto-balance + recalibrate)", auto_base.0 - 150.0, 40.0, 26.0, WHITE);
         draw_text(auto_status, auto_base.0 - 150.0, 68.0, 22.0, if game.auto_up { GREEN } else { ORANGE });
+        // Live recognition status (only with the `vectordb` build).
+        #[cfg(feature = "vectordb")]
+        if !game.recog.status.is_empty() {
+            let col = if game.recog.active { YELLOW } else { SKYBLUE };
+            draw_text(&game.recog.status, auto_base.0 - 150.0, 92.0, 20.0, col);
+        }
 
         // Controls for bothering the RuVector arm (with live wind indicator).
         let wind_tag = if game.auto_wind_on { "ON" } else { "off" };
