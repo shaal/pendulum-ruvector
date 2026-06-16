@@ -1,0 +1,22 @@
+{
+  "name": "pendulum-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Pendulum × RuVector — the whole exhibit running in the browser via WebAssembly.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "build:wasm": "wasm-pack build ../pendulum_web --target web --release --out-dir ../web/src/wasm"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5",
+    "@tsconfig/svelte": "^5",
+    "svelte": "^5",
+    "svelte-check": "^4",
+    "typescript": "^5",
+    "vite": "^6"
+  }
+}

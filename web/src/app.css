@@ -1,0 +1,51 @@
+:root {
+  --bg: #fff7ed;
+  --bg2: #ffedd5;
+  --card: #ffffff;
+  --ink: #3a2a1e;
+  --ink-soft: #7c6a5b;
+  --orange: #f97316;
+  --orange-deep: #ea580c;
+  --teal: #0f766e;
+  --teal-soft: #14b8a6;
+  --shadow: 0 10px 30px rgba(154, 52, 18, 0.12);
+  --radius: 20px;
+  font-family: ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  color: var(--ink);
+  background:
+    radial-gradient(1200px 600px at 80% -10%, var(--bg2), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, #fde68a55, transparent 55%),
+    var(--bg);
+}
+
+#app { max-width: 1100px; margin: 0 auto; padding: 28px 20px 64px; }
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: var(--orange);
+  color: white;
+  font-weight: 700;
+  box-shadow: 0 4px 0 var(--orange-deep);
+  transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.15s ease;
+}
+button:hover { transform: translateY(-1px); }
+button:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--orange-deep); }
+button.ghost {
+  background: #fff;
+  color: var(--teal);
+  box-shadow: inset 0 0 0 2px #99f6e4;
+}
+button.ghost:active { box-shadow: inset 0 0 0 2px #99f6e4; transform: translateY(2px); }
+
+a { color: var(--orange-deep); }

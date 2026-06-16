@@ -1,0 +1,11 @@
+/home/shaal/code/experiments/cognitum/pendulum-ruvector/pendulum_web/target/wasm32-unknown-unknown/release/deps/munge-24b6d36904640ecd.d: /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/lib.rs /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/__macro.rs /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/impls.rs /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/internal.rs /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/../example.md
+
+/home/shaal/code/experiments/cognitum/pendulum-ruvector/pendulum_web/target/wasm32-unknown-unknown/release/deps/libmunge-24b6d36904640ecd.rlib: /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/lib.rs /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/__macro.rs /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/impls.rs /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/internal.rs /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/../example.md
+
+/home/shaal/code/experiments/cognitum/pendulum-ruvector/pendulum_web/target/wasm32-unknown-unknown/release/deps/libmunge-24b6d36904640ecd.rmeta: /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/lib.rs /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/__macro.rs /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/impls.rs /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/internal.rs /home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/../example.md
+
+/home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/lib.rs:
+/home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/__macro.rs:
+/home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/impls.rs:
+/home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/internal.rs:
+/home/shaal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/munge-0.4.7/src/../example.md:

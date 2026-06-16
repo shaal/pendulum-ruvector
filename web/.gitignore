@@ -1,0 +1,6 @@
+node_modules
+dist
+.DS_Store
+*.local
+# NOTE: src/wasm/ is intentionally committed (pre-built WASM, so Cloudflare
+# Pages only runs the Vite build — no Rust toolchain in CI).
