@@ -54,6 +54,48 @@ must change too. In Phase 1 the adaptive arm is told the new length by an oracle
 `cargo run --bin check` is a diagnostic that sweeps configurations to find which
 ones are stabilizable and where adaptation actually decides survival.
 
+## Phase 2: RuVector *is* the estimator (`estimate` binary)
+
+Phase 1's adaptive arm is handed its new parameters by an oracle. Phase 2 makes
+it **recall** them — replacing the oracle with a real RuVector lookup.
+
+```bash
+cargo run --release --features vectordb --bin estimate
+rerun estimate.rrd
+```
+
+How it works:
+
+1. **Seed (offline).** Sweep a grid of arms `(link-2 length × mass × friction)`.
+   For each, fingerprint its dynamics at upright and store it in RuVector:
+   `embedding = dynamics signature`, `payload = {params, gain K, e_up}`
+   (`src/memory.rs`).
+2. **Signature.** The fingerprint is the *closed-loop* linearization `A − b·K`
+   (acceleration-per-state-error and input rows) under a fixed probe gain — ten
+   numbers that determine the balance gain (`src/estimator.rs`). It is matched in
+   closed-loop space because the online regression measures exactly those
+   coefficients; recovering open-loop `A` would amplify the input-term noise.
+3. **Recognize (online).** When the arm is disturbed it runs a short **dithered
+   probe**: it keeps its stale gain, injects a small exogenous multi-sine torque,
+   and regresses *measured* accelerations against state and dither. The dither is
+   the instrument that makes the input column identifiable (a `u = −K·x`
+   stabilizer alone is collinear with the state). The result is the live
+   signature → `VectorDB::search` for the nearest seeded arm → adopt its gain.
+4. **The win.** Side by side, the naive arm keeps its stale gain and **topples**;
+   the adaptive arm recovers via recall after an honest **recognition lag**
+   (~0.38 s), printed every run.
+5. **Self-learning.** After a successful catch, the *measured* signature is
+   inserted back into RuVector tagged as a verified ("learned") config. The same
+   disturbance thrown again is recognized from a rougher, earlier estimate
+   (~0.15 s) — a **~60% lag shrink**. A config felt once is shrugged off faster.
+
+**Operating envelope (honest).** Recognition keys on *structural* (link-length)
+change and works for extensions up to ~2.2 m; beyond that the arm topples faster
+than the probe can identify it — that regime is Phase-3 swing-up. Mass/payload
+changes shift the same gravity-stiffness terms and are confounded with length
+under measurement noise; generalizing across the full config space is what
+Phase-3's GNN interpolation is for. Tests: `cargo test --features vectordb`.
+
 ## Build & run (the logging/visualization demo)
 
 The base build is self-contained (just the Rerun SDK):

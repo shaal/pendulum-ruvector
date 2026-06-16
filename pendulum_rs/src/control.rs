@@ -168,6 +168,28 @@ pub fn balance_gain(sim: &Pendulum, dt: f64) -> Vec4 {
     dlqr(&model, &[160.0, 160.0, 14.0, 14.0], 0.25, dt)
 }
 
+/// The canonical **probe gain** for Phase-2 recognition: the balance gain of the
+/// reference arm (1 m / 1 kg links, light friction) — i.e. the "stale" gain an
+/// un-recalibrated arm already carries. While recognizing, the adaptive arm runs
+/// exactly this controller (the same one the naive arm uses) and measures the
+/// *closed-loop* response under it. Two consequences make this the right choice:
+/// the residual wobble a not-quite-right gain leaves provides the state
+/// excitation the identification needs, and it is faithful to the demo (the
+/// adaptive arm earns its recovery purely by recognition, not by a stronger
+/// controller). The trade-off is the operating envelope: once a disturbance is
+/// large enough that this gain loses the arm before enough clean data is
+/// gathered, recognition can't keep up — which is exactly the regime Phase-3
+/// swing-up exists to handle.
+///
+/// It is the single source of truth shared by the offline seeding (which
+/// fingerprints each grid arm's closed-loop response under this gain) and the
+/// online estimator (which measures that same response) — they must use an
+/// identical gain to be comparable.
+pub fn nominal_probe_gain(dt: f64) -> Vec4 {
+    let reference = Pendulum::new(vec![1.0, 1.0], vec![1.0, 1.0], vec![0.05, 0.05], 9.81, dt);
+    balance_gain(&reference, dt)
+}
+
 /// Mechanical energy of the arm at the straight-up rest pose (KE=0, all links
 /// up). Used as the target for swing-up.
 pub fn upright_energy(sim: &Pendulum) -> f64 {

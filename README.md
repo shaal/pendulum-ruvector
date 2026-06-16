@@ -157,15 +157,20 @@ learned calibrator predicts.
 | Phase | What | Status |
 |---|---|---|
 | **1** | Underactuated arm, in-Rust LQR, adaptive-vs-naive balance, interactive game | ✅ done |
-| **2** | RuVector *is* the estimator — recall nearest past dynamics to recalibrate fast (replaces the Phase-1 oracle) | planned |
+| **2** | RuVector *is* the estimator — recall nearest past dynamics to recalibrate fast (replaces the Phase-1 oracle) | ✅ done |
 | **3** | Energy swing-up (recover from any fall) + GNN generalization across arm configs | planned |
 
-In Phase 1 the adaptive arm is told the new parameters by an oracle. Phase 2
-swaps that for RuVector: the controller forms a *dynamics signature* from the
-arm's motion, queries the vector DB for the nearest past situation, and reuses
-its known-good parameters/gain — calibration as an O(1) memory recall. Phase 3
-adds swing-up so the arm recovers from a full knockdown, and uses the GNN to
-interpolate to arm configurations never seen before. See
+In Phase 1 the adaptive arm is told the new parameters by an oracle. **Phase 2
+swaps that for RuVector** (`cargo run --features vectordb --bin estimate`): the
+controller runs a short dithered probe, forms a *dynamics signature* from the
+arm's measured motion, queries the vector DB for the nearest seeded arm, and
+reuses its known-good gain — calibration as an O(1) memory recall. The naive arm
+keeps its stale gain and topples; the adaptive arm recovers after an honest
+recognition lag, and a self-learning loop (insert each catch) shrinks that lag
+~60% on a repeat. It recognizes structural (link-length) changes within an
+operating envelope; broader generalization across the config space is Phase 3.
+Phase 3 adds swing-up so the arm recovers from a full knockdown, and uses the
+GNN to interpolate to arm configurations never seen before. See
 [`pendulum_rs/README.md`](pendulum_rs/README.md) for the control details.
 
 ## Status
