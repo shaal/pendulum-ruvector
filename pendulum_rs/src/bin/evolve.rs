@@ -28,6 +28,7 @@ const GENERATIONS: usize = 30;
 const TRAIN_SECS: f64 = 8.0; // shorter rollouts while searching (speed)
 const EVAL_SECS: f64 = 15.0; // full rollouts for the final harness verdict
 const N_TRAIN_STARTS: usize = 24; // randomized knockdowns per fitness evaluation
+#[cfg(feature = "vectordb")]
 const LIBRARY_GENS: usize = 20; // generations per anchor when building the policy library
 
 // The nominal champion (warm-start point for domain-randomized search) lives in

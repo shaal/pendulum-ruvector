@@ -77,4 +77,32 @@ fn main() {
         println!("  {label} -> final tip error {:.2} rad  {}", r.final_tip, ok);
     }
     println!("\n  recovered {recovered}/{} knockdown starts", starts.len());
+
+    // Goal-conditioned recovery (Stage 3): the SAME controller, asked for two
+    // different equilibria. [π,π] = both links up; [π,0] = link 1 up, link 2
+    // dangling (easier — link 2 self-stabilizes hanging).
+    use pendulum_rs::control::{balance_gain_for, energy_at, recover_to};
+    let wrap = |a: f64| (a + PI).rem_euclid(2.0 * PI) - PI;
+    println!("\nGoal-conditioned recovery (same controller, different targets), 15s:");
+    for (gname, goal) in [
+        ("[pi, pi]  both up        ", [PI, PI]),
+        ("[pi, 0]   link1-up/link2-down", [PI, 0.0]),
+    ] {
+        let mut rec = 0;
+        for (_, theta0) in &starts {
+            let mut sim = Pendulum::new(vec![1.0, 1.0], vec![1.0, 1.0], vec![0.05, 0.05], 9.81, DT);
+            sim.reset(theta0.clone(), vec![0.0, 0.0]);
+            let k = balance_gain_for(&sim, &goal, DT);
+            let e_goal = energy_at(&sim, &goal);
+            for _ in 0..(15.0 / DT) as usize {
+                let u = recover_to(&sim, &goal, &k, e_goal, U_MAX);
+                sim.step(&[u, 0.0]);
+            }
+            let err = wrap(sim.theta[0] - goal[0]).abs() + wrap(sim.theta[1] - goal[1]).abs();
+            if err < 0.2 {
+                rec += 1;
+            }
+        }
+        println!("  goal {gname} -> recovered {rec}/{}", starts.len());
+    }
 }

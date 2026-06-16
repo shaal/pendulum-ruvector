@@ -92,10 +92,18 @@ surprisingly well and the heavy/long held-out arms are hard for everything.
 (easy→hard arms), fitness reweighting so hard arms aren't drowned, broader seed
 statistics.
 
-### Stage 3 — Goal-conditioning (changeable goal)
-Make the target a parameter (posture / energy / even "spin at rate ω"). The LQR
-setpoint and the reward become functions of a goal vector; the policy takes the
-goal as input. **Target: same machinery hits a second goal without re-coding.**
+### Stage 3 — Goal-conditioning (changeable goal) *(shipped)*
+Made the target a parameter: `linearize_about(goal)`, `balance_gain_for(goal)`,
+`energy_at(goal)`, `equilibrium_torque(goal)`, and goal-conditioned `recover_to`
+— with the upright functions now thin wrappers (no regression; `[π,π]` still
+7/10). The **same** controller, given a different goal, reaches a different
+equilibrium: `[π,π]` (both up, 7/10) and `[π,0]` (link-1 up, link-2 dangling,
+4/10; the dead-hang case is solid). Reachable goals are exactly `{θ₀ free} ×
+{θ₁ ∈ {0,π}}` (link 2 must be gravity-balanced — joint 1 is passive). Tests:
+`reaches_link1_up_link2_down_goal`, `swings_up_from_a_dead_hang`. `check` prints
+both goals. **Honest gap:** `[π,0]` recovers less reliably because the energy-pump
+swing-up aims at *energy*, not the goal *posture* — a posture-aware swing-up
+(Stage 3.5) would close it; goal-conditioned *energy*/spin targets are also open.
 
 ### Stage 4 — Live competing population (optional, ambitious)
 Many agents run concurrently, each on randomized conditions, **sharing

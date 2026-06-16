@@ -119,6 +119,15 @@ unsolved here. The improved swing-up is live in the `play` game, so the RuVector
 arm now hoists itself back up from most knockdowns. Test:
 `swings_up_from_a_dead_hang`.
 
+**Goal-conditioned (the target can change).** The controller is parameterized by
+a *goal* equilibrium (`recover_to(sim, goal, …)`, `balance_gain_for(goal)`,
+`energy_at(goal)`) — the upright functions are now thin wrappers. The *same*
+controller reaches different targets: `[π,π]` (both up, 7/10) and `[π,0]` (link-1
+up, link-2 dangling, 4/10). Reachable goals are exactly `{θ₀ free} × {θ₁∈{0,π}}`
+— with joint 1 passive, link 2 must hang gravity-balanced. `cargo run --bin check`
+prints both. (`[π,0]` is less reliable because the energy pump aims at *energy*,
+not the goal *posture*.) Tests: `reaches_link1_up_link2_down_goal`.
+
 ### GNN interpolation — generalize between seeded arms
 
 Nearest-neighbour recall *snaps* an unseen arm to one seeded config.

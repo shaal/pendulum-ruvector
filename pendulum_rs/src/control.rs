@@ -27,13 +27,33 @@ pub struct LinModel {
     pub b: Vec4,
 }
 
-/// Linearize the (2-link) arm about straight-up using central finite
-/// differences of the true nonlinear dynamics, with `u` applied to joint 0.
+/// Linearize the (2-link) arm about the **upright** equilibrium `[π, π]`.
+/// Thin wrapper over [`linearize_about`] — the goal-conditioned generalization.
 pub fn linearize_upright(sim: &Pendulum) -> LinModel {
+    linearize_about(sim, &[PI, PI])
+}
+
+/// The equilibrium joint-0 torque that holds a goal config statically: the
+/// generalized gravity force on the actuated joint, `u_eq = G₀ = g·M·l₀·sin θ₀`
+/// (`M` = total mass below joint 0). Zero whenever link 1 is vertical (θ₀ ∈
+/// {0, π}); non-zero when the motor must hold link 1 at an angle.
+pub fn equilibrium_torque(sim: &Pendulum, goal: &[f64]) -> f64 {
+    let total_mass: f64 = sim.m.iter().sum();
+    sim.g * total_mass * sim.l[0] * goal[0].sin()
+}
+
+/// Linearize the (2-link) arm about an **arbitrary goal equilibrium** `goal =
+/// [θ₀, θ₁]` (with `ω = 0` and the equilibrium torque `u_eq`), using central
+/// finite differences of the true nonlinear dynamics. Reachable goals have
+/// `θ₁ ∈ {0, π}` (link 2 gravity-balanced); the linearization is valid for any
+/// `goal` but only those are true equilibria. `[π, π]` recovers the old upright
+/// model exactly (there `u_eq = 0`).
+pub fn linearize_about(sim: &Pendulum, goal: &[f64]) -> LinModel {
     assert_eq!(sim.n, 2, "balance controller currently supports 2 links");
     let eps = 1e-6;
-    let eq_theta = [PI, PI];
+    let eq_theta = [goal[0], goal[1]];
     let eq_omega = [0.0, 0.0];
+    let u_eq = equilibrium_torque(sim, goal);
 
     // Angular acceleration of both joints given a torque `u` on joint 0.
     let accel = |th: [f64; 2], om: [f64; 2], u: f64| -> [f64; 2] {
@@ -46,7 +66,8 @@ pub fn linearize_upright(sim: &Pendulum) -> LinModel {
     a[0][2] = 1.0;
     a[1][3] = 1.0;
 
-    // Rows for the accelerations: differentiate w.r.t. each state component.
+    // Rows for the accelerations: differentiate w.r.t. each state component,
+    // holding the input at the equilibrium torque.
     for j in 0..N {
         let (mut thp, mut omp) = (eq_theta, eq_omega);
         let (mut thm, mut omm) = (eq_theta, eq_omega);
@@ -68,15 +89,16 @@ pub fn linearize_upright(sim: &Pendulum) -> LinModel {
                 omm[1] -= eps;
             }
         }
-        let ap = accel(thp, omp, 0.0);
-        let am = accel(thm, omm, 0.0);
+        let ap = accel(thp, omp, u_eq);
+        let am = accel(thm, omm, u_eq);
         a[2][j] = (ap[0] - am[0]) / (2.0 * eps);
         a[3][j] = (ap[1] - am[1]) / (2.0 * eps);
     }
 
-    // Input column B: differentiate accelerations w.r.t. the joint-0 torque.
-    let bp = accel(eq_theta, eq_omega, eps);
-    let bm = accel(eq_theta, eq_omega, -eps);
+    // Input column B: differentiate accelerations w.r.t. the joint-0 torque
+    // (about the equilibrium torque).
+    let bp = accel(eq_theta, eq_omega, u_eq + eps);
+    let bm = accel(eq_theta, eq_omega, u_eq - eps);
     let b = [0.0, 0.0, (bp[0] - bm[0]) / (2.0 * eps), (bp[1] - bm[1]) / (2.0 * eps)];
 
     LinModel { a, b }
@@ -161,10 +183,17 @@ pub fn wind_feedforward(sim: &Pendulum, wind: f64) -> f64 {
     -num / den
 }
 
-/// Convenience: compute the upright balance gain for a given arm with sensible
-/// default LQR weights (heavily penalize angle error).
+/// Convenience: the upright balance gain for an arm. Thin wrapper over
+/// [`balance_gain_for`] with the upright goal.
 pub fn balance_gain(sim: &Pendulum, dt: f64) -> Vec4 {
-    let model = linearize_upright(sim);
+    balance_gain_for(sim, &[PI, PI], dt)
+}
+
+/// The LQR balance gain that stabilizes an arbitrary **goal** equilibrium
+/// (default weights heavily penalize angle error). `goal = [π, π]` reproduces
+/// [`balance_gain`].
+pub fn balance_gain_for(sim: &Pendulum, goal: &[f64], dt: f64) -> Vec4 {
+    let model = linearize_about(sim, goal);
     dlqr(&model, &[160.0, 160.0, 14.0, 14.0], 0.25, dt)
 }
 
@@ -191,8 +220,15 @@ pub fn nominal_probe_gain(dt: f64) -> Vec4 {
 }
 
 /// Mechanical energy of the arm at the straight-up rest pose (KE=0, all links
-/// up). Used as the target for swing-up.
+/// up). Thin wrapper over [`energy_at`] with the upright goal.
 pub fn upright_energy(sim: &Pendulum) -> f64 {
+    energy_at(sim, &[PI, PI])
+}
+
+/// Mechanical energy of the arm resting (KE=0) at an arbitrary **goal** config —
+/// the energy target the goal-conditioned swing-up pumps toward. `PE = −Σ g·cum_i
+/// ·l_i·cos(goal_i)`. `[π, π]` gives the upright energy.
+pub fn energy_at(sim: &Pendulum, goal: &[f64]) -> f64 {
     let n = sim.n;
     let mut cum = vec![0.0; n];
     let mut acc = 0.0;
@@ -200,8 +236,7 @@ pub fn upright_energy(sim: &Pendulum) -> f64 {
         acc += sim.m[i];
         cum[i] = acc;
     }
-    // PE_up = -g Σ cum_i l_i cos(π) = +g Σ cum_i l_i ; KE = 0.
-    (0..n).map(|i| sim.g * cum[i] * sim.l[i]).sum()
+    (0..n).map(|i| -sim.g * cum[i] * sim.l[i] * goal[i].cos()).sum()
 }
 
 /// Energy-pumping swing-up torque on joint 0: inject energy when the arm has
@@ -267,17 +302,40 @@ pub fn wrap_angle(a: f64) -> f64 {
     (a + PI).rem_euclid(2.0 * PI) - PI
 }
 
-/// Always-on recovery controller: balance with LQR when close to upright,
-/// otherwise swing up via collocated PFL. This is what lets the auto arm
-/// "always try to recover", now from a full knockdown rather than just pokes.
+/// Always-on recovery controller toward upright. Thin wrapper over
+/// [`recover_to`] with the `[π, π]` goal.
 pub fn recover_torque(sim: &Pendulum, k: &Vec4, e_up: f64, u_max: f64) -> f64 {
-    let tip_err = wrap(sim.theta[0] - PI).abs() + wrap(sim.theta[1] - PI).abs();
-    // Hand off to the LQR inside its basin of attraction; otherwise keep swinging
-    // up (PFL), which also brakes as the energy approaches the upright total.
+    recover_to(sim, &[PI, PI], k, e_up, u_max)
+}
+
+/// Goal-conditioned feedback torque: `u = u_eq − K·(x − x_goal)`, with angle
+/// errors wrapped relative to the goal. `u_eq` ([`equilibrium_torque`]) is the
+/// steady torque that holds the goal config. Clamped to the motor limit.
+pub fn goal_balance_torque(
+    k: &Vec4,
+    theta: &[f64],
+    omega: &[f64],
+    goal: &[f64],
+    u_eq: f64,
+    u_max: f64,
+) -> f64 {
+    let e0 = wrap(theta[0] - goal[0]);
+    let e1 = wrap(theta[1] - goal[1]);
+    (u_eq - (k[0] * e0 + k[1] * e1 + k[2] * omega[0] + k[3] * omega[1])).clamp(-u_max, u_max)
+}
+
+/// **Goal-conditioned** always-on recovery: LQR about the `goal` equilibrium
+/// inside its basin, energy swing-up toward the goal's energy otherwise. The
+/// arm's *target can change* — `goal = [π, π]` is upright (both links up),
+/// `[π, 0]` is link-1-up / link-2-dangling, etc. Reachable goals have `θ₁ ∈
+/// {0, π}` (link 2 gravity-balanced); [`recover_torque`] is the upright case.
+pub fn recover_to(sim: &Pendulum, goal: &[f64], k: &Vec4, e_goal: f64, u_max: f64) -> f64 {
+    let tip_err = wrap(sim.theta[0] - goal[0]).abs() + wrap(sim.theta[1] - goal[1]).abs();
     if tip_err < 1.0 {
-        balance_torque(k, &sim.theta, &sim.omega, u_max)
+        let u_eq = equilibrium_torque(sim, goal);
+        goal_balance_torque(k, &sim.theta, &sim.omega, goal, u_eq, u_max)
     } else {
-        swingup_pfl(sim, e_up, u_max)
+        swingup_pfl(sim, e_goal, u_max)
     }
 }
 
@@ -342,5 +400,23 @@ mod tests {
         }
         let tip_err = wrap(sim.theta[0] - PI).abs() + wrap(sim.theta[1] - PI).abs();
         assert!(tip_err < 0.2, "should balance upright after swing-up, tip error {tip_err:.3}");
+    }
+
+    /// Goal-conditioning: the SAME controller, asked for a different equilibrium,
+    /// drives the arm to `[π, 0]` — link 1 up, link 2 dangling — from a dead hang.
+    #[test]
+    fn reaches_link1_up_link2_down_goal() {
+        let dt = 0.005;
+        let goal = [PI, 0.0];
+        let mut sim = Pendulum::new(vec![1.0, 1.0], vec![1.0, 1.0], vec![0.05, 0.05], 9.81, dt);
+        sim.reset(vec![0.1, -0.1], vec![0.0, 0.0]); // hanging straight down
+        let k = balance_gain_for(&sim, &goal, dt);
+        let e_goal = energy_at(&sim, &goal);
+        for _ in 0..(15.0 / dt) as usize {
+            let u = recover_to(&sim, &goal, &k, e_goal, 150.0);
+            sim.step(&[u, 0.0]);
+        }
+        let err = wrap(sim.theta[0] - goal[0]).abs() + wrap(sim.theta[1] - goal[1]).abs();
+        assert!(err < 0.25, "should reach link1-up/link2-down [π,0], error {err:.3}");
     }
 }
