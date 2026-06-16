@@ -132,3 +132,8 @@ vectors into a live HNSW store and message-passing the link graph in-process.
 
 This is a research/prototyping testbed — clarity and extensibility over
 optimization.
+
+## License
+
+[MIT](LICENSE). RuVector is a separate project under its own license (see the
+`RuVector/` submodule).
