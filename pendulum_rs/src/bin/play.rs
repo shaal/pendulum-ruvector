@@ -33,6 +33,7 @@ struct Game {
     you_alive: bool,
     you_survived: f64,
     auto_alive: bool,
+    auto_wind_on: bool,
 }
 
 fn fresh_arm() -> Pendulum {
@@ -56,6 +57,7 @@ impl Game {
             you_alive: true,
             you_survived: 0.0,
             auto_alive: true,
+            auto_wind_on: false,
         }
     }
 
@@ -76,24 +78,51 @@ impl Game {
     }
 
     fn step(&mut self, human_torque: f64) {
-        // You: your key torque drives joint 0 (no auto-help).
+        // You: your key torque drives joint 0 — but ONLY while alive. Once fallen,
+        // input is locked out (torque forced to 0) and the arm flops passively.
+        let ht = if self.you_alive {
+            human_torque.clamp(-U_MAX, U_MAX)
+        } else {
+            0.0
+        };
+        self.you.step(&[ht, 0.0]);
         if self.you_alive {
-            self.you.step(&[human_torque.clamp(-U_MAX, U_MAX), 0.0]);
             if Self::tip_error(&self.you) > 1.4 {
                 self.you_alive = false;
             } else {
                 self.you_survived = self.t;
             }
         }
-        // Auto: LQR balance.
+
+        // Auto: LQR balance while alive; passive flop after it loses.
         if self.auto_alive {
             let u = balance_torque(&self.k_auto, &self.auto.theta, &self.auto.omega, U_MAX);
             self.auto.step(&[u, 0.0]);
             if Self::tip_error(&self.auto) > 1.4 {
                 self.auto_alive = false;
             }
+        } else {
+            self.auto.step(&[0.0, 0.0]);
         }
         self.t += DT;
+    }
+
+    // --- "bother the RuVector arm" disturbances ---------------------------
+    /// Shove the auto arm's elbow with a velocity impulse (recoverable kick).
+    fn poke_auto(&mut self, dir: f64) {
+        if self.auto_alive {
+            self.auto.omega[1] += dir * 3.0;
+        }
+    }
+    /// Toggle a steady wind on the auto arm (a sustained force it must fight).
+    fn toggle_wind(&mut self) {
+        self.auto_wind_on = !self.auto_wind_on;
+        self.auto.wind = if self.auto_wind_on { 5.0 } else { 0.0 };
+    }
+    /// Hang an extra 1 kg on the auto arm's tip (cumulative).
+    fn add_payload(&mut self) {
+        let m = self.auto.m[1] + 1.0;
+        self.auto.set_mass(1, m);
     }
 }
 
@@ -139,6 +168,19 @@ async fn main() {
         if is_key_pressed(KeyCode::Space) {
             game.disturb();
         }
+        // "Bother the RuVector arm" controls.
+        if is_key_pressed(KeyCode::Left) {
+            game.poke_auto(-1.0);
+        }
+        if is_key_pressed(KeyCode::Right) {
+            game.poke_auto(1.0);
+        }
+        if is_key_pressed(KeyCode::W) {
+            game.toggle_wind();
+        }
+        if is_key_pressed(KeyCode::M) {
+            game.add_payload();
+        }
         let mut torque = 0.0;
         if is_key_down(KeyCode::A) {
             torque -= HUMAN_TORQUE;
@@ -176,8 +218,17 @@ async fn main() {
         draw_text("RuVector  (auto-balance + recalibrate)", auto_base.0 - 150.0, 40.0, 26.0, WHITE);
         draw_text(auto_status, auto_base.0 - 150.0, 68.0, 22.0, if game.auto_alive { GREEN } else { RED });
 
+        // Controls for bothering the RuVector arm (with live wind indicator).
+        let wind_tag = if game.auto_wind_on { "ON" } else { "off" };
+        draw_text(
+            &format!("Bother RuVector:  \u{2190}/\u{2192} poke    W wind [{wind_tag}]    M +payload"),
+            30.0,
+            h - 52.0,
+            22.0,
+            SKYBLUE,
+        );
         let banner = if !game.disturbed {
-            "SPACE = fire disturbance (arms extend)    R = reset"
+            "SPACE = extend both arms    R = reset"
         } else {
             "DISTURBANCE FIRED — keep yours up!    R = reset"
         };
