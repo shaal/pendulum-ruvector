@@ -151,6 +151,13 @@ fn main() {
         run_library();
         return;
     }
+    // POPULATION=1: a live competing population of CEM islands that share
+    // discoveries through RuVector (Stage 4) — vs the same islands run alone.
+    #[cfg(feature = "vectordb")]
+    if std::env::var("POPULATION").map(|v| v == "1").unwrap_or(false) {
+        run_population();
+        return;
+    }
 
     // CEM is stochastic on this chaotic landscape, but reliably strong: seeds
     // 0–7 recover 7–10/10 (median ~9.5) and 7 of 8 beat the 7/10 baseline; a
@@ -404,4 +411,43 @@ fn run_library() {
          needs the *test arm's own* best champion, which recall can't access — so arm-keyed recall\n\
          plateaus near {recall_caught}/{tot}. Cross-arm generalization is exhausted by these means."
     );
+}
+
+/// Stage 4 — a live competing population of CEM islands sharing discoveries
+/// through RuVector, vs the same islands run independently. The core question:
+/// does sharing reach a target fitness in fewer total rollouts?
+#[cfg(feature = "vectordb")]
+fn run_population() {
+    use pendulum_rs::learn::population_run;
+    let seed: u64 = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(7);
+    let target: f64 = std::env::var("TARGET").ok().and_then(|s| s.parse().ok()).unwrap_or(70.0);
+    let (n, pop, cases, gens, migrate) = (8usize, 16usize, 12usize, 50usize, 3usize);
+
+    eprintln!(
+        "Stage 4 — competing population: {n} weak islands (pop {pop} each), migrate every {migrate} gens, target fitness {target}\n"
+    );
+    let indep = population_run(seed, false, n, pop, cases, gens, migrate, target, "pop_indep.db");
+    let shared = population_run(seed, true, n, pop, cases, gens, migrate, target, "pop_shared.db");
+
+    let rep = |label: &str, o: pendulum_rs::learn::PopulationOutcome| {
+        eprintln!(
+            "{label:24}: reached={:5}  rollouts={:6}  gens={:3}  best_fit={:.1}",
+            o.reached, o.rollouts, o.generations, o.best_fitness
+        );
+    };
+    rep("independent islands", indep);
+    rep("shared via RuVector", shared);
+
+    if shared.reached && indep.reached {
+        let pct = 100.0 * (indep.rollouts as f64 - shared.rollouts as f64) / indep.rollouts as f64;
+        if shared.rollouts < indep.rollouts {
+            eprintln!("\n→ RuVector-shared sharing reached the target in {:.0}% FEWER rollouts ({} vs {}).", pct, shared.rollouts, indep.rollouts);
+        } else {
+            eprintln!("\n→ no speed-up this run (shared {} vs independent {}).", shared.rollouts, indep.rollouts);
+        }
+    } else if shared.reached && !indep.reached {
+        eprintln!("\n→ shared reached the target ({} rollouts); independent did NOT within the budget.", shared.rollouts);
+    } else {
+        eprintln!("\n→ neither reached the target — lower TARGET or raise the budget.");
+    }
 }

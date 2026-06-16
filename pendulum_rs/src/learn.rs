@@ -317,6 +317,168 @@ pub fn recovery_count<P: SwingUpPolicy>(policy: &P, secs: f64) -> usize {
         .count()
 }
 
+// ---------------------------------------------------------------------------
+// Stage 4 — a competing population of CEM islands that share discoveries through
+// RuVector. The question: does sharing reach a target fitness in fewer total
+// rollouts than the same islands run independently?
+// ---------------------------------------------------------------------------
+
+/// Tiny deterministic splitmix64 (mirrors the `evolve` binary's RNG) so the
+/// experiment is fully reproducible without an external crate.
+#[cfg(feature = "vectordb")]
+struct Smix(u64);
+#[cfg(feature = "vectordb")]
+impl Smix {
+    fn u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+    fn unit(&mut self) -> f64 {
+        (self.u64() >> 11) as f64 / (1u64 << 53) as f64
+    }
+    fn gauss(&mut self) -> f64 {
+        use std::f64::consts::PI;
+        let u1 = self.unit().max(1e-12);
+        (-2.0 * u1.ln()).sqrt() * (2.0 * PI * self.unit()).cos()
+    }
+}
+
+/// One CEM island: a small, deliberately weak (high-variance) search.
+#[cfg(feature = "vectordb")]
+struct Island {
+    mean: [f64; NP],
+    std: [f64; NP],
+    rng: Smix,
+    champion: [f64; NP],
+    champ_fit: f64,
+}
+
+#[cfg(feature = "vectordb")]
+impl Island {
+    fn new(seed: u64, init: [f64; NP]) -> Self {
+        Island { mean: init, std: [10.0, 6.0, 6.0, 3.0, 3.0], rng: Smix(seed), champion: init, champ_fit: f64::NEG_INFINITY }
+    }
+
+    /// One generation; returns the rollouts consumed.
+    fn step(&mut self, cases: &[(f64, [f64; 2])], pop: usize) -> usize {
+        let candidates: Vec<[f64; NP]> =
+            (0..pop).map(|_| std::array::from_fn(|i| self.mean[i] + self.std[i] * self.rng.gauss())).collect();
+        let fits: Vec<f64> = candidates.iter().map(|&p| island_fitness(p, cases)).collect();
+        let mut idx: Vec<usize> = (0..pop).collect();
+        idx.sort_by(|&a, &b| fits[b].partial_cmp(&fits[a]).unwrap());
+        let elite = (pop / 4).max(2);
+        for d in 0..NP {
+            let m = idx[..elite].iter().map(|&i| candidates[i][d]).sum::<f64>() / elite as f64;
+            let var = idx[..elite].iter().map(|&i| (candidates[i][d] - m).powi(2)).sum::<f64>() / elite as f64;
+            self.mean[d] = m;
+            self.std[d] = var.sqrt().max(0.5);
+        }
+        if fits[idx[0]] > self.champ_fit {
+            self.champ_fit = fits[idx[0]];
+            self.champion = candidates[idx[0]];
+        }
+        pop * cases.len()
+    }
+}
+
+/// Mean fitness of a candidate over the shared (nominal-arm) training cases.
+#[cfg(feature = "vectordb")]
+fn island_fitness(p: [f64; NP], cases: &[(f64, [f64; 2])]) -> f64 {
+    let policy = EnergyShapingPolicy { p };
+    let sum: f64 = cases.iter().map(|&(_, t)| fitness(&rollout_config(1.0, 1.0, 0.05, &t, &policy, 8.0))).sum();
+    sum / cases.len() as f64
+}
+
+/// Outcome of one population run.
+#[cfg(feature = "vectordb")]
+#[derive(Debug, Clone, Copy)]
+pub struct PopulationOutcome {
+    /// Total rollouts consumed (across all islands) to first reach the target.
+    pub rollouts: usize,
+    /// Generations taken (max if the target was never reached).
+    pub generations: usize,
+    /// The population-floor fitness at stop (the *worst* island) — the quantity
+    /// the target is measured against, since sharing lifts the laggards.
+    pub best_fitness: f64,
+    /// Whether *all* islands reached the target within the generation budget.
+    pub reached: bool,
+}
+
+/// Run a population of CEM islands on the nominal swing-up. With `share`, every
+/// `migrate_every` generations each island writes its champion into a shared
+/// RuVector store and migrates the global best back into its own search; without
+/// it the islands are independent. Returns the rollouts needed to first reach
+/// `target` fitness. Deterministic in `seed` — and `share` is the *only*
+/// difference between the two conditions given the same seed.
+#[cfg(feature = "vectordb")]
+#[allow(clippy::too_many_arguments)]
+pub fn population_run(
+    seed: u64,
+    share: bool,
+    n_islands: usize,
+    pop: usize,
+    n_cases: usize,
+    max_gens: usize,
+    migrate_every: usize,
+    target: f64,
+    store_path: &str,
+) -> PopulationOutcome {
+    use std::f64::consts::PI;
+    // Fixed, seeded training cases shared by all islands (so fitnesses compare).
+    let mut crng = Smix(seed ^ 0xABCD);
+    let cases: Vec<(f64, [f64; 2])> = (0..n_cases)
+        .map(|_| {
+            let th = [
+                PI + (crng.unit() * 2.0 - 1.0) * PI,
+                PI + (crng.unit() * 2.0 - 1.0) * PI,
+            ];
+            (0.0, th)
+        })
+        .collect();
+
+    let init = EnergyShapingPolicy::baseline().p;
+    let mut islands: Vec<Island> = (0..n_islands).map(|i| Island::new(seed.wrapping_add(i as u64 + 1), init)).collect();
+    let mut store = crate::memory::SharedPolicyStore::new(store_path, NP).expect("open shared store");
+
+    let mut rollouts = 0usize;
+    for gen in 0..max_gens {
+        for isl in &mut islands {
+            rollouts += isl.step(&cases, pop);
+        }
+        if share && (gen + 1) % migrate_every == 0 {
+            for isl in &islands {
+                store.insert(&isl.champion, isl.champ_fit).expect("share champion");
+            }
+            if let Ok(Some((best_p, best_f))) = store.best() {
+                for isl in &mut islands {
+                    if best_f > isl.champ_fit {
+                        // Adopt the global discovery as the new search centre and
+                        // re-widen to explore around it.
+                        for d in 0..NP {
+                            isl.mean[d] = best_p[d];
+                        }
+                        isl.std = [6.0, 4.0, 4.0, 2.0, 2.0];
+                        isl.champion = std::array::from_fn(|d| best_p[d]);
+                        isl.champ_fit = best_f;
+                    }
+                }
+            }
+        }
+        // Measure when the WHOLE population reaches competence (min island ≥
+        // target). The single best island is high regardless of sharing — the
+        // point of sharing is to pull the *laggards* up to the best discovery.
+        let worst = islands.iter().map(|i| i.champ_fit).fold(f64::INFINITY, f64::min);
+        if worst >= target {
+            return PopulationOutcome { rollouts, generations: gen + 1, best_fitness: worst, reached: true };
+        }
+    }
+    let worst = islands.iter().map(|i| i.champ_fit).fold(f64::INFINITY, f64::min);
+    PopulationOutcome { rollouts, generations: max_gens, best_fitness: worst, reached: false }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
