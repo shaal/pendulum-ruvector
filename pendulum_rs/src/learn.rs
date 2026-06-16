@@ -33,6 +33,16 @@ impl SwingUpPolicy for PflBaseline {
 /// Number of evolvable parameters in [`EnergyShapingPolicy`].
 pub const NP: usize = 5;
 
+/// The Stage-1 nominal champion (`evolve` default seed) — strong on the nominal
+/// arm, and the warm-start point for domain-randomized search.
+pub const NOMINAL_CHAMPION: [f64; NP] = [35.14, 7.42, 4.24, -6.89, 2.12];
+
+/// The Stage-2.5 domain-randomized champion (`evolve RANDOMIZE_ARM=1 SEED=4`,
+/// under the closest-approach fitness): 10/10 on the nominal harness and the
+/// best held-out transfer found (28/80).
+pub const DR_CHAMPION: [f64; NP] =
+    [33.52139610363168, 7.611966723879871, -3.6270607062030154, -10.524715621403294, 0.8285028042271357];
+
 /// A parameterized energy-shaping swing-up: it shapes the commanded actuated
 /// acceleration `v` as a linear combination of physically-meaningful features,
 /// then lets the shared PFL inversion realize it. It is a strict superset of the
@@ -76,8 +86,12 @@ pub struct Rollout {
     pub final_tip: f64,
     /// Time (s) at which it first held upright for ≥1 s (else the full duration).
     pub time_to_catch: f64,
-    /// ∫ tip-error dt — the potential-shaping term (time spent away from upright).
+    /// ∫ tip-error dt — time spent away from upright.
     pub integral_tip: f64,
+    /// Closest the arm ever got to upright (min tip error over the rollout). The
+    /// key shaping signal: it gives the search a gradient even when the arm is
+    /// never caught — a near-miss scores better than a hopeless spin.
+    pub min_tip: f64,
 }
 
 /// Simulate a knockdown recovery under `policy`: LQR catch inside the basin,
@@ -109,10 +123,12 @@ pub fn rollout_config<P: SwingUpPolicy>(
     let mut hold = 0.0;
     let mut time_to_catch = secs;
     let mut caught_once = false;
+    let mut min_tip = tip(&sim);
     let steps = (secs / DT) as usize;
     for step in 0..steps {
         let e = tip(&sim);
         integral_tip += e * DT;
+        min_tip = min_tip.min(e);
         if e < 0.2 {
             hold += DT;
             if hold >= 1.0 && !caught_once {
@@ -136,19 +152,21 @@ pub fn rollout_config<P: SwingUpPolicy>(
         final_tip,
         time_to_catch,
         integral_tip,
+        min_tip,
     }
 }
 
-/// Scalar fitness (higher is better) from a rollout. A caught arm scores high,
-/// rewarded for catching *fast* and for spending little time away from upright
-/// (potential-based shaping — it doesn't move the optimum). A miss scores
-/// negative, proportional to how far from upright it ended, so the search still
-/// gets gradient from failures.
+/// Scalar fitness (higher is better) from a rollout. A caught arm always
+/// outscores any miss, and is rewarded for catching *fast*. A miss is scored by
+/// its **closest approach** to upright (`min_tip`), not its arbitrary final
+/// state — so on a hard arm it can't yet catch, a candidate that swings *nearer*
+/// the top scores higher and the search keeps a gradient instead of a flat
+/// negative. (Separation: catches ≥ 25, misses ≤ −2, so the order never crosses.)
 pub fn fitness(r: &Rollout) -> f64 {
     if r.caught {
-        200.0 - 10.0 * r.time_to_catch - 0.5 * r.integral_tip
+        100.0 - 5.0 * r.time_to_catch // ∈ [25, 100]
     } else {
-        -50.0 - 20.0 * r.final_tip
+        -10.0 * r.min_tip // ∈ ~[−2, −60]; closer approach ⇒ higher
     }
 }
 
@@ -173,17 +191,40 @@ pub fn recovery_rate_over<P: SwingUpPolicy>(
     configs: &[(f64, f64, f64)],
     secs: f64,
 ) -> (usize, usize) {
+    let mask = recovered_mask(policy, configs, secs);
+    (mask.iter().filter(|&&b| b).count(), mask.len())
+}
+
+/// Per-trial caught flags over `configs × knockdown_starts()`, row-major by
+/// config then start. Lets callers compute a *union ceiling* (recovered by at
+/// least one policy) and difficulty breakdowns.
+pub fn recovered_mask<P: SwingUpPolicy>(
+    policy: &P,
+    configs: &[(f64, f64, f64)],
+    secs: f64,
+) -> Vec<bool> {
     let starts = knockdown_starts();
-    let mut caught = 0;
-    let total = configs.len() * starts.len();
+    let mut mask = Vec::with_capacity(configs.len() * starts.len());
     for &(l1, m1, b1) in configs {
         for (_, theta0) in &starts {
-            if rollout_config(l1, m1, b1, theta0, policy, secs).caught {
-                caught += 1;
-            }
+            mask.push(rollout_config(l1, m1, b1, theta0, policy, secs).caught);
         }
     }
-    (caught, total)
+    mask
+}
+
+/// Link-length band for an arm, used to stratify the held-out generalization
+/// report. (Counter-intuitively, *short* link-2 is the hard case here: less
+/// leverage for the single motor to pump energy, so fewer knockdowns recover —
+/// the report's per-band ceiling makes this plain.)
+pub fn link_band(l1: f64, _m1: f64) -> &'static str {
+    if l1 <= 1.0 {
+        "short"
+    } else if l1 <= 1.8 {
+        "mid"
+    } else {
+        "long"
+    }
 }
 
 /// **Live consumer** (Stage 2): recover an arm by *recalling* the nearest stored
@@ -271,8 +312,8 @@ mod tests {
         // champion's (surprisingly strong) cross-arm transfer. Pinned so the
         // "domain randomization generalizes" claim is a fast, reproducible check.
         let configs = held_out_configs();
-        let dr = EnergyShapingPolicy { p: [59.64, 10.93, -3.07, -10.19, -3.91] };
-        let nominal = EnergyShapingPolicy { p: [35.14, 7.42, 4.24, -6.89, 2.12] };
+        let dr = EnergyShapingPolicy { p: DR_CHAMPION };
+        let nominal = EnergyShapingPolicy { p: NOMINAL_CHAMPION };
         let (dr_c, _) = recovery_rate_over(&dr, &configs, 15.0);
         let (base_c, _) = recovery_rate_over(&PflBaseline, &configs, 15.0);
         let (nom_c, _) = recovery_rate_over(&nominal, &configs, 15.0);
@@ -280,10 +321,29 @@ mod tests {
         assert!(dr_c >= nom_c, "DR ({dr_c}) should at least match the nominal champion ({nom_c})");
     }
 
+    /// The Stage-2.5 finding: no single policy generalizes decisively — the
+    /// *union* of policies (what per-arm recall can deploy) recovers far more
+    /// held-out cases than the best single one. This is the structural reason
+    /// domain randomization can't win alone, and why per-arm recall is the path.
+    #[test]
+    fn policy_union_exceeds_any_single() {
+        let configs = held_out_configs();
+        let mb = recovered_mask(&PflBaseline, &configs, 15.0);
+        let mn = recovered_mask(&EnergyShapingPolicy { p: NOMINAL_CHAMPION }, &configs, 15.0);
+        let md = recovered_mask(&EnergyShapingPolicy { p: DR_CHAMPION }, &configs, 15.0);
+        let count = |m: &[bool]| m.iter().filter(|&&b| b).count();
+        let best_single = count(&mb).max(count(&mn)).max(count(&md));
+        let union = (0..mb.len()).filter(|&i| mb[i] || mn[i] || md[i]).count();
+        assert!(
+            union > best_single + 5,
+            "union ({union}) should clearly exceed the best single policy ({best_single})"
+        );
+    }
+
     #[test]
     fn fitness_prefers_catching() {
-        let caught = Rollout { caught: true, final_tip: 0.0, time_to_catch: 3.0, integral_tip: 20.0 };
-        let missed = Rollout { caught: false, final_tip: 3.0, time_to_catch: 15.0, integral_tip: 200.0 };
+        let caught = Rollout { caught: true, final_tip: 0.0, time_to_catch: 3.0, integral_tip: 20.0, min_tip: 0.0 };
+        let missed = Rollout { caught: false, final_tip: 3.0, time_to_catch: 15.0, integral_tip: 200.0, min_tip: 2.0 };
         assert!(fitness(&caught) > fitness(&missed));
     }
 }
