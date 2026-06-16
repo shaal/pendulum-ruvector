@@ -42,5 +42,12 @@ name = "play"
 path = "src/bin/play.rs"
 required-features = ["game"]
 
+# Phase 2: RuVector becomes the estimator — seed a grid of arm signatures, then
+# recognize the live arm from its motion and recall the matching gain.
+[[bin]]
+name = "estimate"
+path = "src/bin/estimate.rs"
+required-features = ["vectordb"]
+
 [profile.release]
 opt-level = 2
