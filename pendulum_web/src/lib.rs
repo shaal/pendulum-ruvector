@@ -15,7 +15,9 @@ use pendulum_rs::control::{
     balance_gain, balance_torque, nominal_probe_gain, recover_torque, upright_energy, Vec4,
 };
 use pendulum_rs::estimator::{OnlineEstimator, Signature, SIG_DIM};
-use pendulum_rs::learn::{recover_torque_with_policy, EnergyShapingPolicy, PopulationSim, NP};
+use pendulum_rs::learn::{
+    knockdown_starts, recover_torque_with_policy, EnergyShapingPolicy, PopulationSim, NP,
+};
 use pendulum_rs::memory::ConfigMemory;
 use pendulum_rs::simulator::Pendulum;
 use ruvector_core::types::DbOptions;
@@ -498,11 +500,13 @@ pub struct Evolver {
 
 #[wasm_bindgen]
 impl Evolver {
+    /// `islands` = how many competing CEM searchers (8 for Compete; 1 for the
+    /// single-searcher Discover station).
     #[wasm_bindgen(constructor)]
-    pub fn new(sharing: bool) -> Evolver {
-        let sim = PopulationSim::new(
-            POP_SEED, POP_N, POP_POP, POP_CASES, POP_MIGRATE, sharing, "popviz_pop.db",
-        );
+    pub fn new(sharing: bool, islands: usize) -> Evolver {
+        let n = islands.clamp(1, 16);
+        let sim =
+            PopulationSim::new(POP_SEED, n, POP_POP, POP_CASES, POP_MIGRATE, sharing, "popviz_pop.db");
         Evolver { sim, cursor: 0, migrated_pulse: false }
     }
 
@@ -512,7 +516,8 @@ impl Evolver {
 
     pub fn restart(&mut self) {
         let sharing = self.sim.sharing();
-        *self = Evolver::new(sharing);
+        let n = self.sim.n_islands();
+        *self = Evolver::new(sharing, n);
     }
 
     /// Evolve `count` islands (round-robin); migrate when the sweep wraps.
@@ -552,7 +557,7 @@ impl Evolver {
         self.sim.total_rollouts()
     }
     pub fn n_islands(&self) -> usize {
-        POP_N
+        self.sim.n_islands()
     }
     pub fn sharing(&self) -> bool {
         self.sim.sharing()
@@ -570,6 +575,7 @@ impl Evolver {
 pub struct PopArms {
     arms: Vec<Pendulum>,
     up_timer: Vec<f64>,
+    n: usize,
     k: Vec4,
     e_up: f64,
     rng: u64,
@@ -577,14 +583,17 @@ pub struct PopArms {
 
 #[wasm_bindgen]
 impl PopArms {
+    /// `n` display arms (8 for Compete; 1 for the single-searcher Discover).
     #[wasm_bindgen(constructor)]
-    pub fn new() -> PopArms {
+    pub fn new(n: usize) -> PopArms {
+        let n = n.clamp(1, 16);
         let nominal = Pendulum::new(vec![1.0, 1.0], vec![1.0, 1.0], vec![0.05, 0.05], 9.81, DT);
         let k = balance_gain(&nominal, DT);
         let e_up = upright_energy(&nominal);
         PopArms {
-            arms: (0..POP_N).map(|_| pop_arm()).collect(),
-            up_timer: vec![0.0; POP_N],
+            arms: (0..n).map(|_| pop_arm()).collect(),
+            up_timer: vec![0.0; n],
+            n,
             k,
             e_up,
             rng: 0xC0FFEE,
@@ -610,7 +619,7 @@ impl PopArms {
     /// is the flat `n_islands * NP` array from `Evolver::champions_flat`.
     pub fn tick(&mut self, steps: usize, champions: &[f64]) {
         for _ in 0..steps {
-            for i in 0..POP_N {
+            for i in 0..self.n {
                 let mut p = [0.0f64; NP];
                 let base = i * NP;
                 if base + NP <= champions.len() {
@@ -637,7 +646,7 @@ impl PopArms {
 
     /// Flat positions for every arm: island 0's `[x0,y0,x1,y1,x2,y2]`, then 1's, …
     pub fn positions_all(&self) -> Vec<f64> {
-        let mut out = Vec::with_capacity(POP_N * 6);
+        let mut out = Vec::with_capacity(self.n * 6);
         for a in &self.arms {
             for (x, y) in a.link_positions() {
                 out.push(x);
@@ -648,13 +657,7 @@ impl PopArms {
     }
 
     pub fn n_islands(&self) -> usize {
-        POP_N
-    }
-}
-
-impl Default for PopArms {
-    fn default() -> Self {
-        Self::new()
+        self.n
     }
 }
 
@@ -937,6 +940,129 @@ impl Duel {
 }
 
 impl Default for Duel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ─────────────────────── Station: Recover (swing-up) ────────────────────────
+// Knock the arm into a sprawl and watch it hoist itself back upright with the
+// collocated-PFL energy swing-up + LQR catch (`control::recover_torque`). Uses
+// the same named knockdown starts as the native `check` harness, so it's honest
+// about which ones it catches (≈7/10) and which still defeat it.
+
+const RECOVER_UMAX: f64 = 150.0;
+
+/// Station 3 — recover from a knockdown.
+#[wasm_bindgen]
+pub struct Recover {
+    sim: Pendulum,
+    k: Vec4,
+    e_up: f64,
+    starts: Vec<(String, Vec<f64>)>,
+    kind: usize,
+    up_timer: f64,
+    attempt_t: f64,
+    best_tip: f64,
+    outcome: u8,      // 0 recovering · 1 recovered · 2 didn't catch
+    resolved_t: f64,  // attempt_t at which the outcome was decided (-1 = unresolved)
+}
+
+#[wasm_bindgen]
+impl Recover {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Recover {
+        let nominal = Pendulum::new(vec![1.0, 1.0], vec![1.0, 1.0], vec![0.05, 0.05], 9.81, DT);
+        let k = balance_gain(&nominal, DT);
+        let e_up = upright_energy(&nominal);
+        let starts: Vec<(String, Vec<f64>)> =
+            knockdown_starts().into_iter().map(|(n, t)| (n.to_string(), t)).collect();
+        let mut r = Recover {
+            sim: nominal,
+            k,
+            e_up,
+            starts,
+            kind: 0,
+            up_timer: 0.0,
+            attempt_t: 0.0,
+            best_tip: 9.9,
+            outcome: 0,
+            resolved_t: -1.0,
+        };
+        r.knock(0);
+        r
+    }
+
+    /// Reset to knockdown start `i` and begin a fresh recovery attempt.
+    pub fn knock(&mut self, i: usize) {
+        self.kind = i.min(self.starts.len().saturating_sub(1));
+        let theta0 = self.starts[self.kind].1.clone();
+        self.sim.reset(theta0, vec![0.0, 0.0]);
+        self.up_timer = 0.0;
+        self.attempt_t = 0.0;
+        self.best_tip = tip_error(&self.sim);
+        self.outcome = 0;
+        self.resolved_t = -1.0;
+    }
+
+    pub fn step(&mut self, steps: usize) {
+        for _ in 0..steps {
+            let u = recover_torque(&self.sim, &self.k, self.e_up, RECOVER_UMAX);
+            self.sim.step(&[u, 0.0]);
+            self.attempt_t += DT;
+            let tip = tip_error(&self.sim);
+            if tip < self.best_tip {
+                self.best_tip = tip;
+            }
+            if tip < 0.15 {
+                self.up_timer += DT;
+            } else {
+                self.up_timer = 0.0;
+            }
+            if self.outcome == 0 {
+                if self.up_timer > 1.5 {
+                    self.outcome = 1;
+                    self.resolved_t = self.attempt_t;
+                } else if self.attempt_t > 12.0 {
+                    self.outcome = 2;
+                    self.resolved_t = self.attempt_t;
+                }
+            } else if self.attempt_t - self.resolved_t > 3.0 {
+                // loop the demo: re-throw the same knockdown a few seconds later
+                let k = self.kind;
+                self.knock(k);
+            }
+        }
+    }
+
+    pub fn positions(&self) -> Vec<f64> {
+        flat(&self.sim)
+    }
+    pub fn tip(&self) -> f64 {
+        tip_error(&self.sim)
+    }
+    pub fn best_tip(&self) -> f64 {
+        self.best_tip
+    }
+    /// 0 = recovering · 1 = recovered · 2 = didn't catch
+    pub fn outcome(&self) -> u8 {
+        self.outcome
+    }
+    pub fn current_name(&self) -> String {
+        self.starts[self.kind].0.clone()
+    }
+    pub fn num_kinds(&self) -> usize {
+        self.starts.len()
+    }
+    pub fn name_at(&self, i: usize) -> String {
+        self.starts.get(i).map(|s| s.0.clone()).unwrap_or_default()
+    }
+    pub fn kind(&self) -> usize {
+        self.kind
+    }
+}
+
+impl Default for Recover {
     fn default() -> Self {
         Self::new()
     }

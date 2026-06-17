@@ -41,7 +41,7 @@ onmessage = async (e: MessageEvent) => {
     case 'start':
       try {
         await init()
-        ev = new Evolver(m.sharing ?? true)
+        ev = new Evolver(m.sharing ?? true, m.islands ?? 8)
         ready = true
         snapshot()
         if (want) loop()

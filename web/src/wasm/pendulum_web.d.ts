@@ -52,7 +52,11 @@ export class Evolver {
     fitnesses(): Float64Array;
     generation(): number;
     n_islands(): number;
-    constructor(sharing: boolean);
+    /**
+     * `islands` = how many competing CEM searchers (8 for Compete; 1 for the
+     * single-searcher Discover station).
+     */
+    constructor(sharing: boolean, islands: number);
     restart(): void;
     rollouts(): number;
     set_sharing(on: boolean): void;
@@ -110,7 +114,10 @@ export class PopArms {
     free(): void;
     [Symbol.dispose](): void;
     n_islands(): number;
-    constructor();
+    /**
+     * `n` display arms (8 for Compete; 1 for the single-searcher Discover).
+     */
+    constructor(n: number);
     /**
      * Flat positions for every arm: island 0's `[x0,y0,x1,y1,x2,y2]`, then 1's, …
      */
@@ -170,6 +177,31 @@ export class Recalibrator {
 }
 
 /**
+ * Station 3 — recover from a knockdown.
+ */
+export class Recover {
+    free(): void;
+    [Symbol.dispose](): void;
+    best_tip(): number;
+    current_name(): string;
+    kind(): number;
+    /**
+     * Reset to knockdown start `i` and begin a fresh recovery attempt.
+     */
+    knock(i: number): void;
+    name_at(i: number): string;
+    constructor();
+    num_kinds(): number;
+    /**
+     * 0 = recovering · 1 = recovered · 2 = didn't catch
+     */
+    outcome(): number;
+    positions(): Float64Array;
+    step(steps: number): void;
+    tip(): number;
+}
+
+/**
  * Number of evolvable policy parameters per island champion (the stride of
  * `Evolver::champions_flat`).
  */
@@ -194,6 +226,7 @@ export interface InitOutput {
     readonly __wbg_freeswing_free: (a: number, b: number) => void;
     readonly __wbg_poparms_free: (a: number, b: number) => void;
     readonly __wbg_recalibrator_free: (a: number, b: number) => void;
+    readonly __wbg_recover_free: (a: number, b: number) => void;
     readonly duel_add_payload: (a: number) => void;
     readonly duel_auto_positions: (a: number) => [number, number];
     readonly duel_auto_up: (a: number) => number;
@@ -215,7 +248,7 @@ export interface InitOutput {
     readonly evolver_fitnesses: (a: number) => [number, number];
     readonly evolver_generation: (a: number) => number;
     readonly evolver_n_islands: (a: number) => number;
-    readonly evolver_new: (a: number) => number;
+    readonly evolver_new: (a: number, b: number) => number;
     readonly evolver_restart: (a: number) => void;
     readonly evolver_rollouts: (a: number) => number;
     readonly evolver_set_sharing: (a: number, b: number) => void;
@@ -230,7 +263,7 @@ export interface InitOutput {
     readonly freeswing_step: (a: number, b: number) => void;
     readonly np: () => number;
     readonly poparms_n_islands: (a: number) => number;
-    readonly poparms_new: () => number;
+    readonly poparms_new: (a: number) => number;
     readonly poparms_positions_all: (a: number) => [number, number];
     readonly poparms_tick: (a: number, b: number, c: number, d: number) => void;
     readonly recalibrator_adaptive_positions: (a: number) => [number, number];
@@ -249,6 +282,16 @@ export interface InitOutput {
     readonly recalibrator_tick: (a: number, b: number) => void;
     readonly recalibrator_tip_error_adaptive: (a: number) => number;
     readonly recalibrator_tip_error_naive: (a: number) => number;
+    readonly recover_current_name: (a: number) => [number, number];
+    readonly recover_kind: (a: number) => number;
+    readonly recover_knock: (a: number, b: number) => void;
+    readonly recover_name_at: (a: number, b: number) => [number, number];
+    readonly recover_new: () => number;
+    readonly recover_num_kinds: (a: number) => number;
+    readonly recover_outcome: (a: number) => number;
+    readonly recover_positions: (a: number) => [number, number];
+    readonly recover_step: (a: number, b: number) => void;
+    readonly recover_tip: (a: number) => number;
     readonly ruvector_smoke: () => [number, number];
     readonly start: () => void;
     readonly recalibrator_time: (a: number) => number;
@@ -259,6 +302,7 @@ export interface InitOutput {
     readonly recalibrator_new_len: (a: number) => number;
     readonly recalibrator_recall_distance: (a: number) => number;
     readonly recalibrator_recalled_l1: (a: number) => number;
+    readonly recover_best_tip: (a: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

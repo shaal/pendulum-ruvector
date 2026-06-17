@@ -198,10 +198,13 @@ export class Evolver {
         return ret >>> 0;
     }
     /**
+     * `islands` = how many competing CEM searchers (8 for Compete; 1 for the
+     * single-searcher Discover station).
      * @param {boolean} sharing
+     * @param {number} islands
      */
-    constructor(sharing) {
-        const ret = wasm.evolver_new(sharing);
+    constructor(sharing, islands) {
+        const ret = wasm.evolver_new(sharing, islands);
         this.__wbg_ptr = ret;
         EvolverFinalization.register(this, this.__wbg_ptr, this);
         return this;
@@ -342,8 +345,12 @@ export class PopArms {
         const ret = wasm.poparms_n_islands(this.__wbg_ptr);
         return ret >>> 0;
     }
-    constructor() {
-        const ret = wasm.poparms_new();
+    /**
+     * `n` display arms (8 for Compete; 1 for the single-searcher Discover).
+     * @param {number} n
+     */
+    constructor(n) {
+        const ret = wasm.poparms_new(n);
         this.__wbg_ptr = ret;
         PopArmsFinalization.register(this, this.__wbg_ptr, this);
         return this;
@@ -566,6 +573,118 @@ export class Recalibrator {
 if (Symbol.dispose) Recalibrator.prototype[Symbol.dispose] = Recalibrator.prototype.free;
 
 /**
+ * Station 3 — recover from a knockdown.
+ */
+export class Recover {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        RecoverFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_recover_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    best_tip() {
+        const ret = wasm.recover_best_tip(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {string}
+     */
+    current_name() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.recover_current_name(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    kind() {
+        const ret = wasm.recover_kind(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Reset to knockdown start `i` and begin a fresh recovery attempt.
+     * @param {number} i
+     */
+    knock(i) {
+        wasm.recover_knock(this.__wbg_ptr, i);
+    }
+    /**
+     * @param {number} i
+     * @returns {string}
+     */
+    name_at(i) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.recover_name_at(this.__wbg_ptr, i);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    constructor() {
+        const ret = wasm.recover_new();
+        this.__wbg_ptr = ret;
+        RecoverFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @returns {number}
+     */
+    num_kinds() {
+        const ret = wasm.recover_num_kinds(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * 0 = recovering · 1 = recovered · 2 = didn't catch
+     * @returns {number}
+     */
+    outcome() {
+        const ret = wasm.recover_outcome(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Float64Array}
+     */
+    positions() {
+        const ret = wasm.recover_positions(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @param {number} steps
+     */
+    step(steps) {
+        wasm.recover_step(this.__wbg_ptr, steps);
+    }
+    /**
+     * @returns {number}
+     */
+    tip() {
+        const ret = wasm.recover_tip(this.__wbg_ptr);
+        return ret;
+    }
+}
+if (Symbol.dispose) Recover.prototype[Symbol.dispose] = Recover.prototype.free;
+
+/**
  * Number of evolvable policy parameters per island champion (the stride of
  * `Evolver::champions_flat`).
  * @returns {number}
@@ -657,6 +776,9 @@ const PopArmsFinalization = (typeof FinalizationRegistry === 'undefined')
 const RecalibratorFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_recalibrator_free(ptr, 1));
+const RecoverFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_recover_free(ptr, 1));
 
 function getArrayF64FromWasm0(ptr, len) {
     ptr = ptr >>> 0;

@@ -55,7 +55,7 @@
   })
 
   onMount(() => {
-    arms = new PopArms()
+    arms = new PopArms(8)
     nIslands = arms.n_islands()
     const w = new PopWorker()
     w.onerror = (e) => console.error('popWorker onerror:', e.message, e.filename, e.lineno)
@@ -73,7 +73,7 @@
       rollouts = d.rollouts
       if (d.migrated) flash = 0.6
     }
-    w.postMessage({ cmd: 'start', sharing })
+    w.postMessage({ cmd: 'start', sharing, islands: 8 })
     worker = w // assigning the reactive var fires the run/pause effect
     raf = requestAnimationFrame(frame)
   })

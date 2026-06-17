@@ -7,7 +7,7 @@ use pendulum_web::{Evolver, PopArms};
 
 #[test]
 fn population_evolves_and_renders() {
-    let mut ev = Evolver::new(true);
+    let mut ev = Evolver::new(true, 8);
     let n = ev.n_islands();
     assert!(n >= 4, "expected several islands, got {n}");
 
@@ -27,7 +27,7 @@ fn population_evolves_and_renders() {
     let champions = ev.champions_flat();
     assert_eq!(champions.len(), n * pendulum_web::np(), "n_islands * NP champion params");
 
-    let mut arms = PopArms::new();
+    let mut arms = PopArms::new(n);
     assert_eq!(arms.positions_all().len(), n * 6, "6 floats per 2-link arm");
     arms.tick(5, &champions);
     assert_eq!(arms.positions_all().len(), n * 6, "render buffer stays well-formed");
@@ -35,7 +35,7 @@ fn population_evolves_and_renders() {
 
 #[test]
 fn sharing_toggle_is_respected() {
-    let mut ev = Evolver::new(false);
+    let mut ev = Evolver::new(false, 8);
     assert!(!ev.sharing());
     ev.set_sharing(true);
     assert!(ev.sharing());

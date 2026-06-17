@@ -202,3 +202,98 @@ export function drawPopulation(
     ctx.fillRect(0, 0, w, h)
   }
 }
+
+// ---- Recover station: single arm + upright goal guide, coloured by outcome ----
+export function drawRecover(canvas: HTMLCanvasElement, positions: ArrayLike<number>, outcome: number) {
+  const { ctx, w, h } = setup(canvas)
+  const oy = h * 0.62
+  groundLine(ctx, w, oy)
+  const scale = (Math.min(w, h) * 0.34) / 2
+  // faint upright-goal guide
+  ctx.strokeStyle = 'rgba(20,184,166,0.28)'
+  ctx.setLineDash([6, 6])
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(w / 2, oy)
+  ctx.lineTo(w / 2, oy - 2 * scale)
+  ctx.stroke()
+  ctx.setLineDash([])
+  const style = outcome === 1 ? GREEN : outcome === 2 ? RED : TEAL
+  paintArm(ctx, positions, w / 2, oy, scale, style)
+}
+
+// ---- Discover station: champion arm (left) + fitness curve (right) ----
+export function drawDiscover(
+  canvas: HTMLCanvasElement,
+  positions: ArrayLike<number>,
+  fitness: number,
+  history: number[],
+) {
+  const { ctx, w, h } = setup(canvas)
+  const armW = w * 0.42
+  const oy = h * 0.62
+  const scale = (Math.min(armW, h) * 0.34) / 2
+  const col = fitnessColor(fitness)
+  paintArm(ctx, positions, armW / 2, oy, scale, { rod: col, joint: col, tip: '#f97316', tipRing: '#ea580c' })
+  ctx.font = '700 13px ui-rounded, system-ui, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.fillStyle = '#7c6a5b'
+  ctx.fillText('champion · fit ' + (isFinite(fitness) ? fitness.toFixed(0) : '…'), armW / 2, h - 12)
+  drawChart(ctx, armW, 0, w - armW, h, history)
+}
+
+function drawChart(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  hist: number[],
+) {
+  const pad = 28
+  ctx.fillStyle = '#7c6a5b'
+  ctx.font = '700 13px ui-rounded, system-ui, sans-serif'
+  ctx.textAlign = 'left'
+  ctx.fillText('best fitness over generations', x + pad, y + pad - 8)
+  // axes
+  ctx.strokeStyle = '#e2e8f0'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(x + pad, y + pad)
+  ctx.lineTo(x + pad, y + h - pad)
+  ctx.lineTo(x + w - pad, y + h - pad)
+  ctx.stroke()
+  const finite = hist.filter((v) => isFinite(v))
+  if (finite.length < 2) {
+    ctx.fillStyle = '#9ca3af'
+    ctx.fillText('evolving…', x + pad + 8, y + h / 2)
+    return
+  }
+  const min = Math.min(...finite, 0)
+  const max = Math.max(...finite, 1)
+  const span = Math.max(max - min, 1)
+  const px = (i: number) => x + pad + (i / (hist.length - 1)) * (w - 2 * pad)
+  const py = (f: number) => y + h - pad - ((f - min) / span) * (h - 2 * pad)
+  ctx.strokeStyle = '#0f766e'
+  ctx.lineWidth = 2.5
+  ctx.lineJoin = 'round'
+  ctx.beginPath()
+  let started = false
+  hist.forEach((f, i) => {
+    if (!isFinite(f)) return
+    if (started) ctx.lineTo(px(i), py(f))
+    else {
+      ctx.moveTo(px(i), py(f))
+      started = true
+    }
+  })
+  ctx.stroke()
+  // latest value dot + label
+  const last = hist[hist.length - 1]
+  if (isFinite(last)) {
+    ctx.fillStyle = '#f97316'
+    ctx.beginPath()
+    ctx.arc(px(hist.length - 1), py(last), 4, 0, Math.PI * 2)
+    ctx.fill()
+  }
+}
