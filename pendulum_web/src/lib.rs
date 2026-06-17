@@ -16,13 +16,17 @@ use pendulum_rs::control::{
 };
 use pendulum_rs::estimator::{OnlineEstimator, Signature, SIG_DIM};
 use pendulum_rs::learn::{
-    knockdown_starts, recover_torque_with_policy, EnergyShapingPolicy, PopulationSim, NP,
+    knockdown_starts, recover_torque_with_policy, EnergyShapingPolicy, PopulationSim,
+    NOMINAL_CHAMPION, NP,
 };
 use pendulum_rs::memory::ConfigMemory;
+use pendulum_rs::mpc::{MpcConfig, MpcSwingUp, PlanMemory};
 use pendulum_rs::simulator::Pendulum;
 use ruvector_core::types::DbOptions;
 use ruvector_core::{DistanceMetric, SearchQuery, VectorDB, VectorEntry};
+use std::cell::RefCell;
 use std::f64::consts::PI;
+use std::rc::Rc;
 
 /// Control timestep — matches the native crate so the browser physics is identical.
 const DT: f64 = 0.005;
@@ -795,6 +799,11 @@ pub struct Duel {
     auto_up: bool,
     auto_wind_on: bool,
     recog: Recognizer,
+    /// When true the auto arm's swing-up (used after a hard knockdown) is the
+    /// predictive CEM-MPC; when false it's the reactive energy pump.
+    predictive: bool,
+    mpc: MpcSwingUp,
+    mem: Rc<RefCell<PlanMemory>>,
 }
 
 #[wasm_bindgen]
@@ -805,6 +814,10 @@ impl Duel {
         let auto = duel_arm();
         let k_auto = balance_gain(&auto, DUEL_DT);
         let e_up = upright_energy(&auto);
+        let mem = Rc::new(RefCell::new(
+            PlanMemory::new("duel_plans.db", MpcConfig::default().horizon, 0.4).expect("plan memory"),
+        ));
+        let mpc = build_mpc(16, true, &mem);
         Duel {
             you,
             auto,
@@ -817,7 +830,31 @@ impl Duel {
             auto_up: true,
             auto_wind_on: false,
             recog: Recognizer::new(),
+            predictive: true,
+            mpc,
+            mem,
         }
+    }
+
+    /// Choose the auto arm's swing-up brain: predictive MPC (default) or the
+    /// reactive energy pump. Rebuilds the planner's receding-horizon state.
+    pub fn set_predictive(&mut self, on: bool) {
+        self.predictive = on;
+        self.mpc = build_mpc(16, true, &self.mem);
+    }
+
+    /// Hard-knock the auto arm into a dead hang so its swing-up controller has to
+    /// hoist it all the way back — the regime where reactive vs. predictive
+    /// visibly differs (the balance task alone never leaves the LQR basin).
+    pub fn knock_down(&mut self) {
+        self.auto.reset(vec![0.1, -0.1], vec![0.0, 0.0]);
+        self.recog.active = false; // a knockdown is not a length change
+        self.mpc = build_mpc(16, true, &self.mem);
+        self.auto_up = false;
+    }
+
+    pub fn predictive(&self) -> bool {
+        self.predictive
     }
 
     pub fn reset(&mut self) {
@@ -835,6 +872,7 @@ impl Duel {
         self.you_balanced = 0.0;
         self.auto_up = true;
         self.auto_wind_on = false;
+        self.mpc = build_mpc(16, true, &self.mem);
     }
 
     /// Fire the length disturbance (both arms' second link extends). The auto arm
@@ -848,6 +886,7 @@ impl Duel {
         self.e_up = upright_energy(&self.auto);
         self.recog.start(self.t);
         self.disturbed = true;
+        self.mpc = build_mpc(16, true, &self.mem);
     }
 
     pub fn poke_auto(&mut self, dir: f64) {
@@ -893,7 +932,11 @@ impl Duel {
             return;
         }
 
-        let u = recover_torque(&self.auto, &self.k_auto, self.e_up, U_MAX);
+        let u = if self.predictive {
+            recover_torque_with_policy(&self.auto, &self.mpc, &self.k_auto, self.e_up, U_MAX)
+        } else {
+            recover_torque(&self.auto, &self.k_auto, self.e_up, U_MAX)
+        };
         self.auto.step(&[u, 0.0]);
         self.auto_up = tip_error(&self.auto) < 1.4;
         self.t += DUEL_DT;
@@ -1063,6 +1106,243 @@ impl Recover {
 }
 
 impl Default for Recover {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ──────────────── Station: Predict (reactive vs predictive swing-up) ─────────
+// Two arms recover from the *same* knockdown, side by side. The LEFT arm runs
+// the evolved energy-shaping swing-up: **reactive** — it sees only the current
+// state and chatters the motor. The RIGHT arm runs the CEM **model-predictive**
+// controller from `pendulum_rs::mpc`: it forks the real dynamics, rolls a
+// handful of candidate plans forward, and commits a smooth pump — optionally
+// warm-started from a shared RuVector plan memory. Same LQR catch on both, so
+// the only difference is the swing-up brain. The headline readout is the live
+// torque-reversal count: hundreds (reactive) vs a handful (predictive). A budget
+// slider + memory toggle expose *why* RuVector matters — at a small planner
+// budget the cold predictive arm gets flaily, and recall makes it smooth again.
+
+const PREDICT_UMAX: f64 = 150.0;
+
+/// Per-arm running tallies for the before/after readout.
+#[derive(Clone, Copy)]
+struct ArmStat {
+    effort: f64,
+    reversals: u32,
+    last_sign: i32,
+    up_timer: f64,
+    outcome: u8,     // 0 recovering · 1 recovered · 2 missed
+    resolved_t: f64, // attempt time the outcome was decided (-1 = unresolved)
+    catch_t: f64,    // attempt time it first reached upright (-1 = none yet)
+}
+
+impl ArmStat {
+    fn reset() -> Self {
+        ArmStat { effort: 0.0, reversals: 0, last_sign: 0, up_timer: 0.0, outcome: 0, resolved_t: -1.0, catch_t: -1.0 }
+    }
+
+    fn update(&mut self, sim: &Pendulum, u: f64, t: f64) {
+        self.effort += u.abs() * DT;
+        let sign = if u > 1e-6 { 1 } else if u < -1e-6 { -1 } else { 0 };
+        if sign != 0 {
+            if self.last_sign != 0 && sign != self.last_sign {
+                self.reversals += 1;
+            }
+            self.last_sign = sign;
+        }
+        let tip = tip_error(sim);
+        if tip < 0.15 {
+            self.up_timer += DT;
+        } else {
+            self.up_timer = 0.0;
+        }
+        if self.outcome == 0 {
+            if self.up_timer > 1.5 {
+                self.outcome = 1;
+                self.resolved_t = t;
+                self.catch_t = t - 1.5;
+            } else if t > 12.0 {
+                self.outcome = 2;
+                self.resolved_t = t;
+            }
+        }
+    }
+}
+
+/// Build a fresh predictive controller at a given planner budget, optionally
+/// sharing the plan memory. Single CEM iteration keeps it browser-cheap.
+fn build_mpc(pop: usize, use_memory: bool, mem: &Rc<RefCell<PlanMemory>>) -> MpcSwingUp {
+    let cfg = MpcConfig { pop, elite: (pop / 4).max(2), iters: 1, ..MpcConfig::default() };
+    if use_memory {
+        MpcSwingUp::with_memory(cfg, mem.clone())
+    } else {
+        MpcSwingUp::new(cfg)
+    }
+}
+
+/// Station 7 — reactive vs predictive swing-up, with a RuVector plan memory.
+#[wasm_bindgen]
+pub struct Predict {
+    reactive: Pendulum,
+    predictive: Pendulum,
+    k: Vec4,
+    e_up: f64,
+    starts: Vec<(String, Vec<f64>)>,
+    kind: usize,
+    reactive_policy: EnergyShapingPolicy,
+    mpc: MpcSwingUp,
+    mem: Rc<RefCell<PlanMemory>>,
+    pop: usize,
+    use_memory: bool,
+    r: ArmStat,
+    p: ArmStat,
+    attempt_t: f64,
+}
+
+#[wasm_bindgen]
+impl Predict {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Predict {
+        let nominal = Pendulum::new(vec![1.0, 1.0], vec![1.0, 1.0], vec![0.05, 0.05], 9.81, DT);
+        let k = balance_gain(&nominal, DT);
+        let e_up = upright_energy(&nominal);
+        let starts: Vec<(String, Vec<f64>)> =
+            knockdown_starts().into_iter().map(|(n, t)| (n.to_string(), t)).collect();
+        let horizon = MpcConfig::default().horizon;
+        let mem = Rc::new(RefCell::new(PlanMemory::new("predict_plans.db", horizon, 0.4).expect("plan memory")));
+        let pop = 16;
+        let use_memory = true;
+        let mpc = build_mpc(pop, use_memory, &mem);
+        let mut s = Predict {
+            reactive: nominal.clone(),
+            predictive: nominal,
+            k,
+            e_up,
+            starts,
+            kind: 0,
+            reactive_policy: EnergyShapingPolicy { p: NOMINAL_CHAMPION },
+            mpc,
+            mem,
+            pop,
+            use_memory,
+            r: ArmStat::reset(),
+            p: ArmStat::reset(),
+            attempt_t: 0.0,
+        };
+        s.knock(7); // default to the dead hang — the most dramatic contrast
+        s
+    }
+
+    /// Reset both arms to knockdown start `i` and begin a fresh attempt. The
+    /// predictive controller's receding-horizon state is rebuilt, but the shared
+    /// plan memory persists — so repeats get the "practice" benefit.
+    pub fn knock(&mut self, i: usize) {
+        self.kind = i.min(self.starts.len().saturating_sub(1));
+        let theta0 = self.starts[self.kind].1.clone();
+        self.reactive.reset(theta0.clone(), vec![0.0, 0.0]);
+        self.predictive.reset(theta0, vec![0.0, 0.0]);
+        self.r = ArmStat::reset();
+        self.p = ArmStat::reset();
+        self.attempt_t = 0.0;
+        self.mpc = build_mpc(self.pop, self.use_memory, &self.mem);
+    }
+
+    /// Set the predictive planner budget (CEM population). Small = cheap/weak.
+    pub fn set_budget(&mut self, pop: usize) {
+        self.pop = pop.clamp(4, 64);
+        self.mpc = build_mpc(self.pop, self.use_memory, &self.mem);
+    }
+
+    /// Toggle whether the predictive arm warm-starts from the RuVector memory.
+    pub fn set_memory(&mut self, on: bool) {
+        self.use_memory = on;
+        self.mpc = build_mpc(self.pop, self.use_memory, &self.mem);
+    }
+
+    pub fn step(&mut self, steps: usize) {
+        for _ in 0..steps {
+            let ur = recover_torque_with_policy(&self.reactive, &self.reactive_policy, &self.k, self.e_up, PREDICT_UMAX);
+            self.reactive.step(&[ur, 0.0]);
+            self.r.update(&self.reactive, ur, self.attempt_t);
+
+            let up = recover_torque_with_policy(&self.predictive, &self.mpc, &self.k, self.e_up, PREDICT_UMAX);
+            self.predictive.step(&[up, 0.0]);
+            self.p.update(&self.predictive, up, self.attempt_t);
+
+            self.attempt_t += DT;
+
+            // Loop the demo: once both arms have resolved, dwell, then re-throw.
+            if self.r.outcome != 0 && self.p.outcome != 0 {
+                let last = self.r.resolved_t.max(self.p.resolved_t);
+                if self.attempt_t - last > 3.0 {
+                    let k = self.kind;
+                    self.knock(k);
+                }
+            }
+        }
+    }
+
+    // --- rendering ---
+    pub fn reactive_positions(&self) -> Vec<f64> {
+        flat(&self.reactive)
+    }
+    pub fn predictive_positions(&self) -> Vec<f64> {
+        flat(&self.predictive)
+    }
+
+    // --- HUD ---
+    pub fn reactive_reversals(&self) -> u32 {
+        self.r.reversals
+    }
+    pub fn predictive_reversals(&self) -> u32 {
+        self.p.reversals
+    }
+    pub fn reactive_effort(&self) -> f64 {
+        self.r.effort
+    }
+    pub fn predictive_effort(&self) -> f64 {
+        self.p.effort
+    }
+    pub fn reactive_outcome(&self) -> u8 {
+        self.r.outcome
+    }
+    pub fn predictive_outcome(&self) -> u8 {
+        self.p.outcome
+    }
+    pub fn reactive_catch(&self) -> f64 {
+        self.r.catch_t
+    }
+    pub fn predictive_catch(&self) -> f64 {
+        self.p.catch_t
+    }
+    pub fn attempt_time(&self) -> f64 {
+        self.attempt_t
+    }
+    pub fn pop(&self) -> usize {
+        self.pop
+    }
+    pub fn use_memory(&self) -> bool {
+        self.use_memory
+    }
+    pub fn mem_count(&self) -> usize {
+        self.mem.borrow().len()
+    }
+    pub fn current_name(&self) -> String {
+        self.starts[self.kind].0.clone()
+    }
+    pub fn num_kinds(&self) -> usize {
+        self.starts.len()
+    }
+    pub fn name_at(&self, i: usize) -> String {
+        self.starts.get(i).map(|s| s.0.clone()).unwrap_or_default()
+    }
+    pub fn kind(&self) -> usize {
+        self.kind
+    }
+}
+
+impl Default for Predict {
     fn default() -> Self {
         Self::new()
     }

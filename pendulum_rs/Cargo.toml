@@ -75,6 +75,23 @@ required-features = ["vectordb", "viz"]
 name = "evolve"
 path = "src/bin/evolve.rs"
 
+# MPC prototype: reactive vs. predictive swing-up head-to-head (no extra features).
+[[bin]]
+name = "mpc_check"
+path = "src/bin/mpc_check.rs"
+
+# Side-by-side Rerun viz of reactive vs. predictive swing-up (needs the viewer).
+[[bin]]
+name = "mpc_viz"
+path = "src/bin/mpc_viz.rs"
+required-features = ["viz"]
+
+# RuVector plan-memory warm-start experiment (needs the in-process vector DB).
+[[bin]]
+name = "mpc_warmstart"
+path = "src/bin/mpc_warmstart.rs"
+required-features = ["vectordb"]
+
 # Stage 4: live visualization of the competing population (needs both the game
 # graphics stack and the RuVector sharing channel).
 [[bin]]

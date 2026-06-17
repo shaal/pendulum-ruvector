@@ -47,6 +47,14 @@ export class Duel {
         const ret = wasm.duel_disturbed(this.__wbg_ptr);
         return ret !== 0;
     }
+    /**
+     * Hard-knock the auto arm into a dead hang so its swing-up controller has to
+     * hoist it all the way back — the regime where reactive vs. predictive
+     * visibly differs (the balance task alone never leaves the LQR basin).
+     */
+    knock_down() {
+        wasm.duel_knock_down(this.__wbg_ptr);
+    }
     constructor() {
         const ret = wasm.duel_new();
         this.__wbg_ptr = ret;
@@ -58,6 +66,13 @@ export class Duel {
      */
     poke_auto(dir) {
         wasm.duel_poke_auto(this.__wbg_ptr, dir);
+    }
+    /**
+     * @returns {boolean}
+     */
+    predictive() {
+        const ret = wasm.duel_predictive(this.__wbg_ptr);
+        return ret !== 0;
     }
     /**
      * @returns {boolean}
@@ -83,6 +98,14 @@ export class Duel {
     }
     reset() {
         wasm.duel_reset(this.__wbg_ptr);
+    }
+    /**
+     * Choose the auto arm's swing-up brain: predictive MPC (default) or the
+     * reactive energy pump. Rebuilds the planner's receding-horizon state.
+     * @param {boolean} on
+     */
+    set_predictive(on) {
+        wasm.duel_set_predictive(this.__wbg_ptr, on);
     }
     /**
      * Advance `steps` timesteps. `human_dir` ∈ {-1, 0, 1} (A / nothing / D).
@@ -378,6 +401,205 @@ export class PopArms {
     }
 }
 if (Symbol.dispose) PopArms.prototype[Symbol.dispose] = PopArms.prototype.free;
+
+/**
+ * Station 7 — reactive vs predictive swing-up, with a RuVector plan memory.
+ */
+export class Predict {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        PredictFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_predict_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    attempt_time() {
+        const ret = wasm.predict_attempt_time(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {string}
+     */
+    current_name() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.predict_current_name(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    kind() {
+        const ret = wasm.predict_kind(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Reset both arms to knockdown start `i` and begin a fresh attempt. The
+     * predictive controller's receding-horizon state is rebuilt, but the shared
+     * plan memory persists — so repeats get the "practice" benefit.
+     * @param {number} i
+     */
+    knock(i) {
+        wasm.predict_knock(this.__wbg_ptr, i);
+    }
+    /**
+     * @returns {number}
+     */
+    mem_count() {
+        const ret = wasm.predict_mem_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @param {number} i
+     * @returns {string}
+     */
+    name_at(i) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.predict_name_at(this.__wbg_ptr, i);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    constructor() {
+        const ret = wasm.predict_new();
+        this.__wbg_ptr = ret;
+        PredictFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @returns {number}
+     */
+    num_kinds() {
+        const ret = wasm.predict_num_kinds(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    pop() {
+        const ret = wasm.predict_pop(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    predictive_catch() {
+        const ret = wasm.predict_predictive_catch(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    predictive_effort() {
+        const ret = wasm.predict_predictive_effort(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    predictive_outcome() {
+        const ret = wasm.predict_predictive_outcome(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Float64Array}
+     */
+    predictive_positions() {
+        const ret = wasm.predict_predictive_positions(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    predictive_reversals() {
+        const ret = wasm.predict_predictive_reversals(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    reactive_catch() {
+        const ret = wasm.predict_reactive_catch(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    reactive_effort() {
+        const ret = wasm.predict_reactive_effort(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    reactive_outcome() {
+        const ret = wasm.predict_reactive_outcome(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Float64Array}
+     */
+    reactive_positions() {
+        const ret = wasm.predict_reactive_positions(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    reactive_reversals() {
+        const ret = wasm.predict_reactive_reversals(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Set the predictive planner budget (CEM population). Small = cheap/weak.
+     * @param {number} pop
+     */
+    set_budget(pop) {
+        wasm.predict_set_budget(this.__wbg_ptr, pop);
+    }
+    /**
+     * Toggle whether the predictive arm warm-starts from the RuVector memory.
+     * @param {boolean} on
+     */
+    set_memory(on) {
+        wasm.predict_set_memory(this.__wbg_ptr, on);
+    }
+    /**
+     * @param {number} steps
+     */
+    step(steps) {
+        wasm.predict_step(this.__wbg_ptr, steps);
+    }
+    /**
+     * @returns {boolean}
+     */
+    use_memory() {
+        const ret = wasm.predict_use_memory(this.__wbg_ptr);
+        return ret !== 0;
+    }
+}
+if (Symbol.dispose) Predict.prototype[Symbol.dispose] = Predict.prototype.free;
 
 /**
  * Station 2 — RuVector recognizes a changed arm and recalls its gain.
@@ -773,6 +995,9 @@ const FreeSwingFinalization = (typeof FinalizationRegistry === 'undefined')
 const PopArmsFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_poparms_free(ptr, 1));
+const PredictFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_predict_free(ptr, 1));
 const RecalibratorFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_recalibrator_free(ptr, 1));
