@@ -396,3 +396,69 @@ pendulum-ruvector/
 5. **Sound** — subtle SFX/clicks fit the playful exhibit; want them, or silent?
 6. **Fidelity vs phone smoothness** — if we must choose, do we shrink popviz on
    mobile (fewer islands) or just lower its speed? (Default: shrink on mobile.)
+
+## Shipped (2026-06-16)
+
+All six stations are built, tested, and on the `web-experience` branch (PR #15),
+each running physics + RuVector in the browser:
+
+| Station | Handle(s) | Verified |
+|---|---|---|
+| 0 The toy | `FreeSwing` | renders + chaos nudge |
+| 2 Recognize | `Recalibrator` | cold recall matches native (0.38s, l1≈2.5, dist 4.6); lag-shrink test |
+| 3 Recover | `Recover` | catches small-poke (0.01 rad); honest ~7/10; native test |
+| 4 Discover | `Evolver`(1)+`PopArms`(1) on a Web Worker | fitness curve climbs (gen 53→103, fit 61→70) |
+| 5 Compete | `Evolver`(8)+`PopArms`(8) on a Web Worker | ~61 fps while evolving; sharing toggle |
+| 6 You vs RuVector | `Duel` | auto balances; disturbance → RECALLED l1≈2.0m in 0.26s |
+
+`pendulum_web` native tests: 9 passing. Bundle ~123 KB gzipped. Tab UI runs only
+the active station; the two evolutionary stations run on Web Workers so rendering
+stays smooth.
+
+## Follow-ups & known issues (backlog)
+
+### (a) Pre-existing chaotic test failures in `pendulum_rs` (not from the web work)
+Three native tests fail on **pristine `main`** under the current Rust (1.95)
+toolchain — confirmed independent of the web work (`control.rs`/`simulator.rs`
+were never touched, and the default-feature build graph is identical to main's):
+
+- `control::tests::swings_up_from_a_dead_hang` (`src/control.rs:~430`) — ends tip
+  error ~4.4 rad instead of catching.
+- `control::tests::goal_conditioned_recovery_rates` (`src/control.rs:~475`).
+- `learn::tests::domain_randomized_champion_generalizes` (`src/learn.rs:~607`).
+
+**Root cause:** these assert recovery *outcomes* of a chaotic swing-up. A
+double pendulum's trajectory diverges exponentially, so a last-ULP floating-point
+difference (different rustc codegen / vectorization across compiler versions) flips
+whether the controller catches — a gross pass/fail swing, not a near-threshold
+wobble. Repro: `cargo test -p pendulum_rs --lib swings_up_from_a_dead_hang`.
+
+**Options to fix (pick one):**
+1. **Stabilize the math across toolchains:** route transcendentals (`sin`/`cos`)
+   through the `libm` crate in `simulator.rs` (and anywhere in `control`/`learn`),
+   so results are bit-stable regardless of rustc, then re-pin the champions. This
+   also unlocks cross-device-reproducible share-links on the web (see M5). Most
+   principled; touches the dynamics, so re-pin carefully.
+2. **Loosen the assertions** to closest-approach / "got within X of upright" rather
+   than a hard catch, matching the project's own honest "7/10, stochastic" framing.
+3. **Pin the toolchain** with a `rust-toolchain.toml` and re-pin the champions for
+   that exact compiler (brittle; breaks again on upgrade).
+4. **`#[ignore]`** them with a comment if they're meant as exploratory rather than
+   CI gates.
+Recommended: (1) if cross-device determinism is wanted anyway, else (2).
+
+### (b) M5 — exhibit polish (deferred)
+- **Motion/animation:** bouncy tab transitions, state-change micro-interactions,
+  the "playful exhibit" feel (a small motion lib, respecting reduced-motion).
+- **Mobile pass:** test on a real phone — touch A/D latency in the duel, canvas
+  sizing on rotate, responsive reflow of each station's two-column layout.
+- **Accessibility:** keyboard nav + focus states for tabs, `aria-label`s, alt/role
+  on canvases, `prefers-reduced-motion`, and a colour-blind-safe alternative to the
+  red/green status (add shape/text cues, not colour alone).
+- **Deep-dive copy:** edit pass; render equations with **KaTeX** (currently inline
+  `code`); consistency of terminology.
+- **Share-links:** encode each station's params + seed in the URL for reproducible,
+  shareable runs (pairs with (a) option 1 for cross-device identical playback).
+- **Optional:** wasm-threads (`wasm-bindgen-rayon` + `SharedArrayBuffer` + a
+  Cloudflare `_headers` COOP/COEP file) to evolve across *all* cores; subtle SFX;
+  a duel leaderboard (tiny Worker + KV).
