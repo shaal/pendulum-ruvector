@@ -11,7 +11,9 @@
 
 use wasm_bindgen::prelude::*;
 
-use pendulum_rs::control::{balance_gain, balance_torque, nominal_probe_gain, upright_energy, Vec4};
+use pendulum_rs::control::{
+    balance_gain, balance_torque, nominal_probe_gain, recover_torque, upright_energy, Vec4,
+};
 use pendulum_rs::estimator::{OnlineEstimator, Signature, SIG_DIM};
 use pendulum_rs::learn::{recover_torque_with_policy, EnergyShapingPolicy, PopulationSim, NP};
 use pendulum_rs::memory::ConfigMemory;
@@ -651,6 +653,290 @@ impl PopArms {
 }
 
 impl Default for PopArms {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ─────────────────────── Station: Duel (You vs RuVector) ────────────────────
+// A steppable port of `pendulum_rs/src/bin/play.rs`. Two underactuated arms: YOU
+// drive the left one's base motor (A/D on desktop, on-screen buttons on mobile);
+// the right one balances itself and, on a length disturbance, runs a live RuVector
+// recognition probe to recall its new gain. Plus disturbances to throw at it.
+
+const DUEL_DT: f64 = 0.004;
+const HUMAN_TORQUE: f64 = 90.0;
+const DUEL_NEW_LEN: f64 = 2.0;
+
+fn duel_arm() -> Pendulum {
+    let mut a = Pendulum::new(vec![1.0, 1.0], vec![1.0, 1.0], vec![0.05, 0.05], 9.81, DUEL_DT);
+    // A touch off-upright so there's immediately something to control.
+    a.reset(vec![PI + 0.12, PI - 0.10], vec![0.0, 0.0]);
+    a
+}
+
+/// Live RuVector recognition for the in-game length disturbance (Phase-2 pipeline
+/// wired into the duel). Mirrors the `play` binary's `Recognizer`.
+struct Recognizer {
+    mem: ConfigMemory,
+    est: OnlineEstimator,
+    k_probe: Vec4,
+    active: bool,
+    t_start: f64,
+    smoothed: Option<Signature>,
+    status: String,
+}
+
+impl Recognizer {
+    const MIN_SAMPLES: usize = 25;
+    const FREEZE_TIP: f64 = 0.18;
+    const EMA: f64 = 0.5;
+    const COMMIT: f32 = 5.0;
+    const TIMEOUT: f64 = 0.9;
+
+    fn new() -> Self {
+        let mut mem = ConfigMemory::new("play_configs.db").expect("open RuVector store");
+        let _ = mem.seed_grid();
+        let k_probe = mem.probe_gain();
+        Recognizer {
+            mem,
+            est: OnlineEstimator::new(240, 1e-4),
+            k_probe,
+            active: false,
+            t_start: 0.0,
+            smoothed: None,
+            status: String::new(),
+        }
+    }
+
+    fn start(&mut self, t: f64) {
+        self.active = true;
+        self.t_start = t;
+        self.est.clear();
+        self.smoothed = None;
+        self.status = "RECOGNIZING…".to_string();
+    }
+
+    fn probe_torque(&self, auto: &Pendulum, t: f64) -> (f64, f64) {
+        let e0 = (auto.theta[0] - PI + PI).rem_euclid(2.0 * PI) - PI;
+        let e1 = (auto.theta[1] - PI + PI).rem_euclid(2.0 * PI) - PI;
+        let k = &self.k_probe;
+        let u_fb = -(k[0] * e0 + k[1] * e1 + k[2] * auto.omega[0] + k[3] * auto.omega[1]);
+        let dither = 6.0 * (2.0 * PI * 1.7 * t).sin() + 4.0 * (2.0 * PI * 3.3 * t).sin();
+        ((u_fb + dither).clamp(-U_MAX, U_MAX), dither)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn observe(
+        &mut self,
+        theta_before: &[f64],
+        omega_before: &[f64],
+        dither: f64,
+        omega_after: &[f64],
+        t: f64,
+        auto: &Pendulum,
+        k_auto: &mut Vec4,
+        e_up: &mut f64,
+    ) {
+        let tip = {
+            let w = |a: f64| (a + PI).rem_euclid(2.0 * PI) - PI;
+            w(theta_before[0] - PI).abs() + w(theta_before[1] - PI).abs()
+        };
+        if tip < Self::FREEZE_TIP {
+            self.est.observe(theta_before, omega_before, dither, omega_after, DUEL_DT);
+        }
+        if self.est.len() >= Self::MIN_SAMPLES {
+            if let Some(raw) = self.est.estimate() {
+                let sig: Signature = match self.smoothed {
+                    Some(prev) => {
+                        let s = std::array::from_fn(|i| Self::EMA * raw[i] + (1.0 - Self::EMA) * prev[i]);
+                        self.smoothed = Some(s);
+                        s
+                    }
+                    None => {
+                        self.smoothed = Some(raw);
+                        raw
+                    }
+                };
+                if let Ok(Some(rc)) = self.mem.recall(&sig) {
+                    if rc.score < Self::COMMIT {
+                        *k_auto = rc.k;
+                        *e_up = rc.e_up;
+                        self.status = format!("RECALLED l1≈{:.1}m in {:.2}s", rc.l1, t - self.t_start);
+                        self.active = false;
+                        return;
+                    }
+                }
+            }
+        }
+        if t - self.t_start > Self::TIMEOUT {
+            *k_auto = balance_gain(auto, DUEL_DT);
+            *e_up = upright_energy(auto);
+            self.status = "recognized (fallback)".to_string();
+            self.active = false;
+        }
+    }
+}
+
+/// Station 6 — You vs RuVector.
+#[wasm_bindgen]
+pub struct Duel {
+    you: Pendulum,
+    auto: Pendulum,
+    k_auto: Vec4,
+    e_up: f64,
+    t: f64,
+    disturbed: bool,
+    you_up: bool,
+    you_balanced: f64,
+    auto_up: bool,
+    auto_wind_on: bool,
+    recog: Recognizer,
+}
+
+#[wasm_bindgen]
+impl Duel {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Duel {
+        let you = duel_arm();
+        let auto = duel_arm();
+        let k_auto = balance_gain(&auto, DUEL_DT);
+        let e_up = upright_energy(&auto);
+        Duel {
+            you,
+            auto,
+            k_auto,
+            e_up,
+            t: 0.0,
+            disturbed: false,
+            you_up: true,
+            you_balanced: 0.0,
+            auto_up: true,
+            auto_wind_on: false,
+            recog: Recognizer::new(),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        // Keep the already-seeded RuVector store (re-seeding is the slow part) —
+        // just clear the probe state.
+        self.recog.active = false;
+        self.recog.status = String::new();
+        self.you = duel_arm();
+        self.auto = duel_arm();
+        self.k_auto = balance_gain(&self.auto, DUEL_DT);
+        self.e_up = upright_energy(&self.auto);
+        self.t = 0.0;
+        self.disturbed = false;
+        self.you_up = true;
+        self.you_balanced = 0.0;
+        self.auto_up = true;
+        self.auto_wind_on = false;
+    }
+
+    /// Fire the length disturbance (both arms' second link extends). The auto arm
+    /// starts a live RuVector recognition probe.
+    pub fn disturb(&mut self) {
+        if self.disturbed {
+            return;
+        }
+        self.you.set_length(1, DUEL_NEW_LEN);
+        self.auto.set_length(1, DUEL_NEW_LEN);
+        self.e_up = upright_energy(&self.auto);
+        self.recog.start(self.t);
+        self.disturbed = true;
+    }
+
+    pub fn poke_auto(&mut self, dir: f64) {
+        self.auto.omega[1] += dir * 3.0;
+    }
+    pub fn toggle_wind(&mut self) {
+        self.auto_wind_on = !self.auto_wind_on;
+        self.auto.wind = if self.auto_wind_on { 5.0 } else { 0.0 };
+    }
+    pub fn add_payload(&mut self) {
+        let m = self.auto.m[1] + 1.0;
+        self.auto.set_mass(1, m);
+        self.e_up = upright_energy(&self.auto);
+    }
+
+    fn step_once(&mut self, torque: f64) {
+        // You: A/D always drives joint 0 (no "game over" — fight it back up).
+        self.you.step(&[torque.clamp(-U_MAX, U_MAX), 0.0]);
+        self.you_up = tip_error(&self.you) < 1.4;
+        if self.you_up {
+            self.you_balanced += DUEL_DT;
+        }
+
+        // Auto: run the recognition probe if active, else LQR balance + swing-up.
+        if self.recog.active {
+            let theta_before = self.auto.theta.clone();
+            let omega_before = self.auto.omega.clone();
+            let (u, dither) = self.recog.probe_torque(&self.auto, self.t);
+            self.auto.step(&[u, 0.0]);
+            let omega_after = self.auto.omega.clone();
+            self.recog.observe(
+                &theta_before,
+                &omega_before,
+                dither,
+                &omega_after,
+                self.t,
+                &self.auto,
+                &mut self.k_auto,
+                &mut self.e_up,
+            );
+            self.auto_up = tip_error(&self.auto) < 1.4;
+            self.t += DUEL_DT;
+            return;
+        }
+
+        let u = recover_torque(&self.auto, &self.k_auto, self.e_up, U_MAX);
+        self.auto.step(&[u, 0.0]);
+        self.auto_up = tip_error(&self.auto) < 1.4;
+        self.t += DUEL_DT;
+    }
+
+    /// Advance `steps` timesteps. `human_dir` ∈ {-1, 0, 1} (A / nothing / D).
+    pub fn step(&mut self, steps: usize, human_dir: f64) {
+        let torque = (human_dir.clamp(-1.0, 1.0) * HUMAN_TORQUE).clamp(-U_MAX, U_MAX);
+        for _ in 0..steps {
+            self.step_once(torque);
+        }
+    }
+
+    pub fn you_positions(&self) -> Vec<f64> {
+        flat(&self.you)
+    }
+    pub fn auto_positions(&self) -> Vec<f64> {
+        flat(&self.auto)
+    }
+    pub fn you_up(&self) -> bool {
+        self.you_up
+    }
+    pub fn auto_up(&self) -> bool {
+        self.auto_up
+    }
+    pub fn you_balanced(&self) -> f64 {
+        self.you_balanced
+    }
+    pub fn recog_status(&self) -> String {
+        self.recog.status.clone()
+    }
+    pub fn recog_active(&self) -> bool {
+        self.recog.active
+    }
+    pub fn disturbed(&self) -> bool {
+        self.disturbed
+    }
+    pub fn wind_on(&self) -> bool {
+        self.auto_wind_on
+    }
+    pub fn time(&self) -> f64 {
+        self.t
+    }
+}
+
+impl Default for Duel {
     fn default() -> Self {
         Self::new()
     }

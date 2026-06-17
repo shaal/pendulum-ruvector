@@ -4,6 +4,7 @@
   import Toy from './stations/Toy.svelte'
   import Recognize from './stations/Recognize.svelte'
   import Crowd from './stations/Crowd.svelte'
+  import Duel from './stations/Duel.svelte'
 
   let ready = $state(false)
   let ruv = $state('starting…')
@@ -32,13 +33,15 @@
     <button class:sel={tab === 'toy'} onclick={() => (tab = 'toy')}>The toy</button>
     <button class:sel={tab === 'recognize'} onclick={() => (tab = 'recognize')}>Recognize</button>
     <button class:sel={tab === 'compete'} onclick={() => (tab = 'compete')}>Compete</button>
-    <span class="soon">recover · discover · you vs RuVector — coming</span>
+    <button class:sel={tab === 'duel'} onclick={() => (tab = 'duel')}>You vs RuVector</button>
+    <span class="soon">recover · discover — coming</span>
   </nav>
   <!-- All stations stay mounted (state persists), but only the active one runs
        its simulation loop (each guards on its `active` prop). -->
   <div class="pane" class:hidden={tab !== 'toy'}><Toy active={tab === 'toy'} /></div>
   <div class="pane" class:hidden={tab !== 'recognize'}><Recognize active={tab === 'recognize'} /></div>
   <div class="pane" class:hidden={tab !== 'compete'}><Crowd active={tab === 'compete'} /></div>
+  <div class="pane" class:hidden={tab !== 'duel'}><Duel active={tab === 'duel'} /></div>
 {:else}
   <div class="boot">loading the physics…</div>
 {/if}

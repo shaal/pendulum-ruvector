@@ -2,6 +2,38 @@
 /* eslint-disable */
 
 /**
+ * Station 6 — You vs RuVector.
+ */
+export class Duel {
+    free(): void;
+    [Symbol.dispose](): void;
+    add_payload(): void;
+    auto_positions(): Float64Array;
+    auto_up(): boolean;
+    /**
+     * Fire the length disturbance (both arms' second link extends). The auto arm
+     * starts a live RuVector recognition probe.
+     */
+    disturb(): void;
+    disturbed(): boolean;
+    constructor();
+    poke_auto(dir: number): void;
+    recog_active(): boolean;
+    recog_status(): string;
+    reset(): void;
+    /**
+     * Advance `steps` timesteps. `human_dir` ∈ {-1, 0, 1} (A / nothing / D).
+     */
+    step(steps: number, human_dir: number): void;
+    time(): number;
+    toggle_wind(): void;
+    wind_on(): boolean;
+    you_balanced(): number;
+    you_positions(): Float64Array;
+    you_up(): boolean;
+}
+
+/**
  * Worker-side: the evolving population (no display arms).
  */
 export class Evolver {
@@ -157,10 +189,26 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_duel_free: (a: number, b: number) => void;
     readonly __wbg_evolver_free: (a: number, b: number) => void;
     readonly __wbg_freeswing_free: (a: number, b: number) => void;
     readonly __wbg_poparms_free: (a: number, b: number) => void;
     readonly __wbg_recalibrator_free: (a: number, b: number) => void;
+    readonly duel_add_payload: (a: number) => void;
+    readonly duel_auto_positions: (a: number) => [number, number];
+    readonly duel_auto_up: (a: number) => number;
+    readonly duel_disturb: (a: number) => void;
+    readonly duel_disturbed: (a: number) => number;
+    readonly duel_new: () => number;
+    readonly duel_poke_auto: (a: number, b: number) => void;
+    readonly duel_recog_active: (a: number) => number;
+    readonly duel_recog_status: (a: number) => [number, number];
+    readonly duel_reset: (a: number) => void;
+    readonly duel_step: (a: number, b: number, c: number) => void;
+    readonly duel_toggle_wind: (a: number) => void;
+    readonly duel_wind_on: (a: number) => number;
+    readonly duel_you_positions: (a: number) => [number, number];
+    readonly duel_you_up: (a: number) => number;
     readonly evolver_best_island: (a: number) => number;
     readonly evolver_champions_flat: (a: number) => [number, number];
     readonly evolver_evolve_islands: (a: number, b: number) => void;
@@ -204,6 +252,8 @@ export interface InitOutput {
     readonly ruvector_smoke: () => [number, number];
     readonly start: () => void;
     readonly recalibrator_time: (a: number) => number;
+    readonly duel_time: (a: number) => number;
+    readonly duel_you_balanced: (a: number) => number;
     readonly recalibrator_lag: (a: number) => number;
     readonly recalibrator_last_lag: (a: number) => number;
     readonly recalibrator_new_len: (a: number) => number;

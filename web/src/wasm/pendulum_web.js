@@ -1,6 +1,141 @@
 /* @ts-self-types="./pendulum_web.d.ts" */
 
 /**
+ * Station 6 — You vs RuVector.
+ */
+export class Duel {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DuelFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_duel_free(ptr, 0);
+    }
+    add_payload() {
+        wasm.duel_add_payload(this.__wbg_ptr);
+    }
+    /**
+     * @returns {Float64Array}
+     */
+    auto_positions() {
+        const ret = wasm.duel_auto_positions(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @returns {boolean}
+     */
+    auto_up() {
+        const ret = wasm.duel_auto_up(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Fire the length disturbance (both arms' second link extends). The auto arm
+     * starts a live RuVector recognition probe.
+     */
+    disturb() {
+        wasm.duel_disturb(this.__wbg_ptr);
+    }
+    /**
+     * @returns {boolean}
+     */
+    disturbed() {
+        const ret = wasm.duel_disturbed(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    constructor() {
+        const ret = wasm.duel_new();
+        this.__wbg_ptr = ret;
+        DuelFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {number} dir
+     */
+    poke_auto(dir) {
+        wasm.duel_poke_auto(this.__wbg_ptr, dir);
+    }
+    /**
+     * @returns {boolean}
+     */
+    recog_active() {
+        const ret = wasm.duel_recog_active(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {string}
+     */
+    recog_status() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.duel_recog_status(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    reset() {
+        wasm.duel_reset(this.__wbg_ptr);
+    }
+    /**
+     * Advance `steps` timesteps. `human_dir` ∈ {-1, 0, 1} (A / nothing / D).
+     * @param {number} steps
+     * @param {number} human_dir
+     */
+    step(steps, human_dir) {
+        wasm.duel_step(this.__wbg_ptr, steps, human_dir);
+    }
+    /**
+     * @returns {number}
+     */
+    time() {
+        const ret = wasm.duel_time(this.__wbg_ptr);
+        return ret;
+    }
+    toggle_wind() {
+        wasm.duel_toggle_wind(this.__wbg_ptr);
+    }
+    /**
+     * @returns {boolean}
+     */
+    wind_on() {
+        const ret = wasm.duel_wind_on(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {number}
+     */
+    you_balanced() {
+        const ret = wasm.duel_you_balanced(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Float64Array}
+     */
+    you_positions() {
+        const ret = wasm.duel_you_positions(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @returns {boolean}
+     */
+    you_up() {
+        const ret = wasm.duel_you_up(this.__wbg_ptr);
+        return ret !== 0;
+    }
+}
+if (Symbol.dispose) Duel.prototype[Symbol.dispose] = Duel.prototype.free;
+
+/**
  * Worker-side: the evolving population (no display arms).
  */
 export class Evolver {
@@ -507,6 +642,9 @@ function __wbg_get_imports() {
     };
 }
 
+const DuelFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_duel_free(ptr, 1));
 const EvolverFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_evolver_free(ptr, 1));

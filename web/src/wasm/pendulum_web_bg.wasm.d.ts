@@ -1,10 +1,26 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const __wbg_duel_free: (a: number, b: number) => void;
 export const __wbg_evolver_free: (a: number, b: number) => void;
 export const __wbg_freeswing_free: (a: number, b: number) => void;
 export const __wbg_poparms_free: (a: number, b: number) => void;
 export const __wbg_recalibrator_free: (a: number, b: number) => void;
+export const duel_add_payload: (a: number) => void;
+export const duel_auto_positions: (a: number) => [number, number];
+export const duel_auto_up: (a: number) => number;
+export const duel_disturb: (a: number) => void;
+export const duel_disturbed: (a: number) => number;
+export const duel_new: () => number;
+export const duel_poke_auto: (a: number, b: number) => void;
+export const duel_recog_active: (a: number) => number;
+export const duel_recog_status: (a: number) => [number, number];
+export const duel_reset: (a: number) => void;
+export const duel_step: (a: number, b: number, c: number) => void;
+export const duel_toggle_wind: (a: number) => void;
+export const duel_wind_on: (a: number) => number;
+export const duel_you_positions: (a: number) => [number, number];
+export const duel_you_up: (a: number) => number;
 export const evolver_best_island: (a: number) => number;
 export const evolver_champions_flat: (a: number) => [number, number];
 export const evolver_evolve_islands: (a: number, b: number) => void;
@@ -48,6 +64,8 @@ export const recalibrator_tip_error_naive: (a: number) => number;
 export const ruvector_smoke: () => [number, number];
 export const start: () => void;
 export const recalibrator_time: (a: number) => number;
+export const duel_time: (a: number) => number;
+export const duel_you_balanced: (a: number) => number;
 export const recalibrator_lag: (a: number) => number;
 export const recalibrator_last_lag: (a: number) => number;
 export const recalibrator_new_len: (a: number) => number;
