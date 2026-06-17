@@ -20,6 +20,7 @@
   let recogActive = $state(false)
   let disturbed = $state(false)
   let windOn = $state(false)
+  let predictive = $state(true)
 
   let sim: Duel | null = null
   let acc = 0
@@ -72,8 +73,14 @@
       case 'arrowright': e.preventDefault(); sim.poke_auto(1); break
       case 'w': sim.toggle_wind(); break
       case 'm': sim.add_payload(); break
+      case 'k': sim.knock_down(); break
       case 'r': sim.reset(); break
     }
+  }
+
+  function togglePredictive() {
+    predictive = !predictive
+    sim?.set_predictive(predictive)
   }
   function onKeyUp(e: KeyboardEvent) {
     if (e.key.toLowerCase() === 'a') leftHeld = false
@@ -82,6 +89,7 @@
 
   onMount(() => {
     sim = new Duel()
+    predictive = sim.predictive()
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     raf = requestAnimationFrame(frame)
@@ -155,6 +163,13 @@
         <button class="ghost" onclick={() => sim?.poke_auto(1)}>poke ▶</button>
         <button class="ghost" class:sel={windOn} onclick={() => sim?.toggle_wind()}>🌬 wind</button>
         <button class="ghost" onclick={() => sim?.add_payload()}>＋ payload</button>
+        <button class="ghost" onclick={() => sim?.knock_down()}>🧨 knock down (K)</button>
+      </div>
+      <div class="group">
+        <span class="glabel">Its swing-up brain</span>
+        <button class="ghost" class:sel={predictive} onclick={togglePredictive}>
+          {predictive ? 'predictive (MPC) 🟢' : 'reactive (energy pump)'}
+        </button>
       </div>
     </div>
 
@@ -167,8 +182,10 @@
           Both arms are <strong>underactuated</strong>: only joint 0 has a motor, and it has to
           control the passive joint 1 through the coupled dynamics — which is why balancing by hand
           is so hard. The green arm holds the unstable upright with an <strong>LQR</strong> gain and,
-          when knocked far out, a collocated-PFL energy <strong>swing-up</strong> (the same
-          <code>recover_torque</code> used across the project).
+          when knocked far out (hit <strong>🧨 knock down</strong>), a <strong>swing-up</strong>. Use
+          the toggle to pick its swing-up brain: the reactive energy pump, or the
+          <strong>predictive MPC</strong> from the Predict station — which plans a smooth hoist
+          instead of flailing. Same catch at the top either way.
         </p>
         <p>
           On the length disturbance it runs the live <strong>RuVector recognition</strong> pipeline

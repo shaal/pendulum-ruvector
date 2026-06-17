@@ -6,9 +6,16 @@ vector database run entirely client-side in WebAssembly. No backend.
 This is the **M0 spike**: one station (the free-swinging pendulum) that proves the
 whole pipeline — Rust → WebAssembly → Canvas2D → Cloudflare Pages — and measures
 the bundle. Result: **~83 KB gzipped total** (wasm ≈ 62 KB, js ≈ 19 KB, css ≈ 1.5 KB).
-The remaining stations (balance, recognize, recover, discover, compete, the A/D
-duel) are built on top of this same scaffold — see
+The remaining stations (balance, recognize, recover, predict, discover, compete,
+the A/D duel) are built on top of this same scaffold — see
 [`../docs/plans/web-experience.md`](../docs/plans/web-experience.md).
+
+The **Predict** station puts the reactive energy-shaping swing-up next to a
+model-predictive (CEM-MPC) one on the same knockdown: same catch at the top, but
+the predictive arm *plans* a smooth pump instead of flailing (watch the live
+torque-reversal counters — hundreds vs a handful), with a planner-budget slider
+and a RuVector plan-memory toggle that shows recall buying back compute when the
+budget is small.
 
 ## Develop
 

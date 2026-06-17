@@ -16,11 +16,23 @@ export class Duel {
      */
     disturb(): void;
     disturbed(): boolean;
+    /**
+     * Hard-knock the auto arm into a dead hang so its swing-up controller has to
+     * hoist it all the way back — the regime where reactive vs. predictive
+     * visibly differs (the balance task alone never leaves the LQR basin).
+     */
+    knock_down(): void;
     constructor();
     poke_auto(dir: number): void;
+    predictive(): boolean;
     recog_active(): boolean;
     recog_status(): string;
     reset(): void;
+    /**
+     * Choose the auto arm's swing-up brain: predictive MPC (default) or the
+     * reactive energy pump. Rebuilds the planner's receding-horizon state.
+     */
+    set_predictive(on: boolean): void;
     /**
      * Advance `steps` timesteps. `human_dir` ∈ {-1, 0, 1} (A / nothing / D).
      */
@@ -130,6 +142,48 @@ export class PopArms {
 }
 
 /**
+ * Station 7 — reactive vs predictive swing-up, with a RuVector plan memory.
+ */
+export class Predict {
+    free(): void;
+    [Symbol.dispose](): void;
+    attempt_time(): number;
+    current_name(): string;
+    kind(): number;
+    /**
+     * Reset both arms to knockdown start `i` and begin a fresh attempt. The
+     * predictive controller's receding-horizon state is rebuilt, but the shared
+     * plan memory persists — so repeats get the "practice" benefit.
+     */
+    knock(i: number): void;
+    mem_count(): number;
+    name_at(i: number): string;
+    constructor();
+    num_kinds(): number;
+    pop(): number;
+    predictive_catch(): number;
+    predictive_effort(): number;
+    predictive_outcome(): number;
+    predictive_positions(): Float64Array;
+    predictive_reversals(): number;
+    reactive_catch(): number;
+    reactive_effort(): number;
+    reactive_outcome(): number;
+    reactive_positions(): Float64Array;
+    reactive_reversals(): number;
+    /**
+     * Set the predictive planner budget (CEM population). Small = cheap/weak.
+     */
+    set_budget(pop: number): void;
+    /**
+     * Toggle whether the predictive arm warm-starts from the RuVector memory.
+     */
+    set_memory(on: boolean): void;
+    step(steps: number): void;
+    use_memory(): boolean;
+}
+
+/**
  * Station 2 — RuVector recognizes a changed arm and recalls its gain.
  */
 export class Recalibrator {
@@ -225,6 +279,7 @@ export interface InitOutput {
     readonly __wbg_evolver_free: (a: number, b: number) => void;
     readonly __wbg_freeswing_free: (a: number, b: number) => void;
     readonly __wbg_poparms_free: (a: number, b: number) => void;
+    readonly __wbg_predict_free: (a: number, b: number) => void;
     readonly __wbg_recalibrator_free: (a: number, b: number) => void;
     readonly __wbg_recover_free: (a: number, b: number) => void;
     readonly duel_add_payload: (a: number) => void;
@@ -232,11 +287,14 @@ export interface InitOutput {
     readonly duel_auto_up: (a: number) => number;
     readonly duel_disturb: (a: number) => void;
     readonly duel_disturbed: (a: number) => number;
+    readonly duel_knock_down: (a: number) => void;
     readonly duel_new: () => number;
     readonly duel_poke_auto: (a: number, b: number) => void;
+    readonly duel_predictive: (a: number) => number;
     readonly duel_recog_active: (a: number) => number;
     readonly duel_recog_status: (a: number) => [number, number];
     readonly duel_reset: (a: number) => void;
+    readonly duel_set_predictive: (a: number, b: number) => void;
     readonly duel_step: (a: number, b: number, c: number) => void;
     readonly duel_toggle_wind: (a: number) => void;
     readonly duel_wind_on: (a: number) => number;
@@ -266,6 +324,24 @@ export interface InitOutput {
     readonly poparms_new: (a: number) => number;
     readonly poparms_positions_all: (a: number) => [number, number];
     readonly poparms_tick: (a: number, b: number, c: number, d: number) => void;
+    readonly predict_current_name: (a: number) => [number, number];
+    readonly predict_kind: (a: number) => number;
+    readonly predict_knock: (a: number, b: number) => void;
+    readonly predict_mem_count: (a: number) => number;
+    readonly predict_name_at: (a: number, b: number) => [number, number];
+    readonly predict_new: () => number;
+    readonly predict_num_kinds: (a: number) => number;
+    readonly predict_pop: (a: number) => number;
+    readonly predict_predictive_outcome: (a: number) => number;
+    readonly predict_predictive_positions: (a: number) => [number, number];
+    readonly predict_predictive_reversals: (a: number) => number;
+    readonly predict_reactive_outcome: (a: number) => number;
+    readonly predict_reactive_positions: (a: number) => [number, number];
+    readonly predict_reactive_reversals: (a: number) => number;
+    readonly predict_set_budget: (a: number, b: number) => void;
+    readonly predict_set_memory: (a: number, b: number) => void;
+    readonly predict_step: (a: number, b: number) => void;
+    readonly predict_use_memory: (a: number) => number;
     readonly recalibrator_adaptive_positions: (a: number) => [number, number];
     readonly recalibrator_committed: (a: number) => number;
     readonly recalibrator_disturbed: (a: number) => number;
@@ -297,6 +373,11 @@ export interface InitOutput {
     readonly recalibrator_time: (a: number) => number;
     readonly duel_time: (a: number) => number;
     readonly duel_you_balanced: (a: number) => number;
+    readonly predict_attempt_time: (a: number) => number;
+    readonly predict_predictive_catch: (a: number) => number;
+    readonly predict_predictive_effort: (a: number) => number;
+    readonly predict_reactive_catch: (a: number) => number;
+    readonly predict_reactive_effort: (a: number) => number;
     readonly recalibrator_lag: (a: number) => number;
     readonly recalibrator_last_lag: (a: number) => number;
     readonly recalibrator_new_len: (a: number) => number;

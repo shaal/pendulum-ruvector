@@ -4,6 +4,7 @@
   import Toy from './stations/Toy.svelte'
   import Recognize from './stations/Recognize.svelte'
   import Recover from './stations/Recover.svelte'
+  import Predict from './stations/Predict.svelte'
   import Discover from './stations/Discover.svelte'
   import Crowd from './stations/Crowd.svelte'
   import Duel from './stations/Duel.svelte'
@@ -35,6 +36,7 @@
     <button class:sel={tab === 'toy'} onclick={() => (tab = 'toy')}>The toy</button>
     <button class:sel={tab === 'recognize'} onclick={() => (tab = 'recognize')}>Recognize</button>
     <button class:sel={tab === 'recover'} onclick={() => (tab = 'recover')}>Recover</button>
+    <button class:sel={tab === 'predict'} onclick={() => (tab = 'predict')}>Predict</button>
     <button class:sel={tab === 'discover'} onclick={() => (tab = 'discover')}>Discover</button>
     <button class:sel={tab === 'compete'} onclick={() => (tab = 'compete')}>Compete</button>
     <button class:sel={tab === 'duel'} onclick={() => (tab = 'duel')}>You vs RuVector</button>
@@ -44,6 +46,7 @@
   <div class="pane" class:hidden={tab !== 'toy'}><Toy active={tab === 'toy'} /></div>
   <div class="pane" class:hidden={tab !== 'recognize'}><Recognize active={tab === 'recognize'} /></div>
   <div class="pane" class:hidden={tab !== 'recover'}><Recover active={tab === 'recover'} /></div>
+  <div class="pane" class:hidden={tab !== 'predict'}><Predict active={tab === 'predict'} /></div>
   <div class="pane" class:hidden={tab !== 'discover'}><Discover active={tab === 'discover'} /></div>
   <div class="pane" class:hidden={tab !== 'compete'}><Crowd active={tab === 'compete'} /></div>
   <div class="pane" class:hidden={tab !== 'duel'}><Duel active={tab === 'duel'} /></div>
