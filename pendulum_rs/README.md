@@ -298,3 +298,21 @@ RuVector's default features (`simd-avx512`, `simsimd`) are x86/C-toolchain
 specific, so this crate links `ruvector-core` with
 `default-features = false, features = ["storage", "hnsw", "parallel"]` for clean
 builds on Apple Silicon.
+
+## Known test issues
+
+Three chaotic swing-up tests currently fail on newer Rust toolchains (seen on
+1.95): `control::tests::swings_up_from_a_dead_hang`,
+`control::tests::goal_conditioned_recovery_rates`, and
+`learn::tests::domain_randomized_champion_generalizes`. They assert recovery
+*outcomes* of a double pendulum, whose trajectory diverges exponentially — a
+last-ULP floating-point/codegen difference across compiler versions can flip
+whether the controller catches. This is a test-robustness issue, not a logic
+regression. Fix options (stabilize transcendentals via the `libm` crate and
+re-pin; or loosen to closest-approach assertions) are tracked in
+[`../docs/plans/web-experience.md`](../docs/plans/web-experience.md) → *Follow-ups
+& known issues (a)*.
+
+Note: when building the wasm/web target, `ruvector-core` is selected per-target —
+file-backed `storage`/`hnsw`/`parallel` natively, pure in-memory on `wasm32` (see
+the `[target.'cfg(...)']` blocks in `Cargo.toml`).

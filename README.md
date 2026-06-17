@@ -34,6 +34,10 @@ cd pendulum_rs
 cargo run --release --bin arm -- --newlen 2.0 --out arm.rrd && rerun arm.rrd
 ```
 
+> First time? This needs the **RuVector submodule** checked out and the **`rerun`**
+> viewer installed, or it won't compile / won't visualize — see
+> [Prerequisites](#prerequisites).
+
 ### 🎮 Play it: You vs RuVector
 
 ```bash
@@ -101,6 +105,16 @@ Each subproject has its own README with full details:
 
 ---
 
+## Prerequisites
+
+| Need | Required for | Notes |
+|---|---|---|
+| **RuVector submodule** checked out | **every** `pendulum_rs` build | `ruvector-core` / `ruvector-gnn` are *path* dependencies in `Cargo.toml`, so Cargo must read them even for the headless `evolve` / `arm` / `check` binaries that don't enable any RuVector feature. A fresh clone without the submodule fails on **any** `cargo` command with `failed to read .../RuVector/crates/ruvector-core/Cargo.toml`. Clone with `--recurse-submodules`, or run `git submodule update --init RuVector`. |
+| **Rust toolchain** (`cargo`) | the `pendulum_rs` crate | Stable Rust. First build is roughly ~4 min (baseline) and ~5–6 min with the `vectordb` / `game` features (compiles `ruvector-core` + `macroquad`). |
+| **`uv`** | the Python `multi_link_pendulum` testbed | Creates the venv and installs deps. |
+| **`rerun` viewer 0.33.0** | viewing any `.rrd`, `--spawn` live mode, and the Python visual demo | The viewer version must match the SDKs (0.33). Install with `uv tool install 'rerun-sdk==0.33.0'` (or `pip install 'rerun-sdk==0.33.0'`). The `.rrd`-writing and headless binaries run fine without it; you just can't *view* the result. |
+| **GL/X11 libs + a display** | the GUI binaries `popviz` and `play` (macroquad) | Needs `libGL libX11 libXi libXcursor libxkbcommon libasound` and an X/Wayland display. WSLg and a normal Linux desktop work out of the box; on a headless box install those libs and run under `xvfb`. The `.rrd`-writing binaries (`arm`, `estimate`, the base sim) need no display. |
+
 ## Quickstart
 
 Clone **with the submodule** (RuVector is referenced, not vendored):
@@ -116,15 +130,17 @@ cd pendulum
 ```bash
 cd multi_link_pendulum
 uv venv && uv pip install -e .
-python -m examples.run_visual_demo --links 3 --noise 0.05      # live Rerun viewer
-python -m examples.collect_calibration_data --episodes 5        # write data/calibration.jsonl
-python -m examples.simple_calibration_experiment --target length
+# Use `uv run` (or activate .venv) so the editable package resolves:
+uv run python -m examples.run_visual_demo --links 3 --noise 0.05      # live Rerun viewer
+uv run python -m examples.collect_calibration_data --episodes 5        # write data/calibration.jsonl
+uv run python -m examples.simple_calibration_experiment --target length
 ```
 
 ### Rust
 
-Needs the Rerun viewer on PATH for live mode (`pip install rerun-sdk==0.33.0` or
-`uv tool install rerun-sdk`). Otherwise it writes an `.rrd` you open later.
+Needs the Rerun viewer on PATH for live mode (`uv tool install 'rerun-sdk==0.33.0'`
+or `pip install 'rerun-sdk==0.33.0'` — pin 0.33 to match the SDK). Otherwise it
+writes an `.rrd` you open later.
 
 ```bash
 cd pendulum_rs

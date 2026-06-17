@@ -7,20 +7,21 @@ description = "Rust n-link pendulum: Lagrangian dynamics + Rerun visualization +
 [[bin]]
 name = "pendulum_rs"
 path = "src/main.rs"
+required-features = ["viz"]
 
 [dependencies]
 # Rerun Rust SDK, pinned to match the locally-installed viewer (0.33.0).
 # `default-features = false` + `sdk` avoids building the embedded wgpu/egui
 # viewer; `.spawn()` launches the external `rerun` binary you already have,
 # and `.save()` writes an .rrd file. This keeps first compile far lighter.
-rerun = { version = "0.33", default-features = false, features = ["sdk"] }
+rerun = { version = "0.33", default-features = false, features = ["sdk"], optional = true }
 
 # --- RuVector in-process integration (optional, behind features) ----------
 # `vectordb`: insert each step's state vector into RuVector's HNSW store.
 #   We disable RuVector's default features because they include `simd-avx512`
 #   (x86-only) and `simsimd` (C build) — both unfriendly on Apple Silicon.
 #   The portable `storage`/`hnsw`/`parallel` features are all we need.
-ruvector-core = { path = "../RuVector/crates/ruvector-core", default-features = false, features = ["storage", "hnsw", "parallel"], optional = true }
+# ruvector-core is declared per-target below (native: file + HNSW + parallel; wasm: in-memory).
 # `gnn`: message-pass over the link/joint graph with a real RuVector GNN layer.
 ruvector-gnn = { path = "../RuVector/crates/ruvector-gnn", optional = true }
 serde_json = { version = "1", optional = true }
@@ -28,8 +29,21 @@ serde_json = { version = "1", optional = true }
 # graphics stack, so it's only built when the `game` feature is on.
 macroquad = { version = "0.4", optional = true }
 
+# RuVector's vector DB, declared per target so wasm gets the pure in-memory
+# backend (no redb / memmap2 / rayon) while native keeps file-backed HNSW + parallel.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ruvector-core = { path = "../RuVector/crates/ruvector-core", default-features = false, features = ["storage", "hnsw", "parallel"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+ruvector-core = { path = "../RuVector/crates/ruvector-core", default-features = false, features = ["memory-only"], optional = true }
+
 [features]
-default = []
+# `viz` is on by default so every documented native command (the `arm`, base
+# sim, and `estimate` Rerun demos) works unchanged. The wasm/web crate depends on
+# this crate with `default-features = false`, which drops Rerun (a native-only SDK
+# that does not build for wasm) along with everything else feature-gated.
+default = ["viz"]
+viz = ["dep:rerun"]
 vectordb = ["dep:ruvector-core", "dep:serde_json"]
 gnn = ["dep:ruvector-gnn"]
 # Convenience: enable the whole unified loop.
@@ -42,12 +56,19 @@ name = "play"
 path = "src/bin/play.rs"
 required-features = ["game"]
 
+# Flagship adaptive-vs-naive balance demo. Uses the Rerun viewer, so it needs the
+# `viz` feature (on by default — `cargo run --bin arm` works as before).
+[[bin]]
+name = "arm"
+path = "src/bin/arm.rs"
+required-features = ["viz"]
+
 # Phase 2: RuVector becomes the estimator — seed a grid of arm signatures, then
 # recognize the live arm from its motion and recall the matching gain.
 [[bin]]
 name = "estimate"
 path = "src/bin/estimate.rs"
-required-features = ["vectordb"]
+required-features = ["vectordb", "viz"]
 
 # Stage 1: evolutionary swing-up search (no extra features needed).
 [[bin]]

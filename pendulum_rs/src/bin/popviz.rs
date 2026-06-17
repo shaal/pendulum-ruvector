@@ -8,7 +8,8 @@
 //! policy — so you watch them compete and improve. Press **S** to toggle sharing
 //! on/off: with it on, a laggard arm visibly inherits the global-best policy the
 //! instant a migration fires; with it off, the stragglers keep flailing. **R**
-//! restarts the population.
+//! restarts the population. **H** toggles a plain-language overlay (on at launch)
+//! that explains what every label, colour, and the gold box mean.
 
 use macroquad::prelude::*;
 use pendulum_rs::control::{balance_gain, upright_energy};
@@ -93,6 +94,7 @@ async fn main() {
     let mut champions = vec![EnergyShapingPolicy::baseline().p; N];
     let mut acc = 0.0f32;
     let mut flash = 0.0f32; // migration flash timer
+    let mut show_help = true; // plain-language "what am I looking at?" panel, on at launch
 
     loop {
         // --- input ---
@@ -104,6 +106,9 @@ async fn main() {
             shared.lock().unwrap().want_reset = true;
             arms = (0..N).map(|_| fresh_arm()).collect();
             up_timer = vec![0.0; N];
+        }
+        if is_key_pressed(KeyCode::H) {
+            show_help = !show_help;
         }
 
         // --- pull the latest snapshot ---
@@ -177,14 +182,56 @@ async fn main() {
         let share_tag = if sharing { "ON" } else { "off" };
         let share_col = if sharing { GREEN } else { ORANGE };
         draw_text(
-            &format!("gen {gen}   rollouts {rollouts}   sharing [{share_tag}]   (S toggle · R restart)"),
+            &format!("gen {gen}   rollouts {rollouts}   sharing [{share_tag}]   (S toggle · R restart · H help)"),
             16.0,
             48.0,
             22.0,
             share_col,
         );
 
+        if show_help {
+            draw_help_panel();
+        }
+
         next_frame().await
+    }
+}
+
+/// Plain-language overlay explaining what the screen is showing. Shown at launch
+/// (a first-time viewer has no way to guess what "island 7 fit 81" means) and
+/// toggled with H so it gets out of the way once you know.
+fn draw_help_panel() {
+    let lines: [&str; 18] = [
+        "What am I looking at?",
+        "",
+        "Each box is an \"island\" - its own trial-and-error search for how to",
+        "swing this arm up and balance it. The arm runs that island's best try so far.",
+        "",
+        "fit = fitness: how well that best try recovers after being knocked down.",
+        "Higher is better. Arms shade red (weak) -> green (strong).",
+        "The gold box marks the best island in the whole population right now.",
+        "",
+        "Arms get knocked down again and again on purpose, so you can",
+        "watch each one earn its recovery.",
+        "",
+        "gen = rounds of improvement.   rollouts = total practice attempts.",
+        "sharing (S): islands post their best find into RuVector and copy the",
+        "overall best back. A weak arm can jump ahead the instant a share fires",
+        "(the green flash). Turn sharing off to watch them struggle alone.",
+        "",
+        "S = sharing on/off     R = restart     H = hide / show this",
+    ];
+    let pad = 24.0;
+    let line_h = 24.0;
+    let w = 900.0_f32.min(screen_width() - 40.0);
+    let h = pad * 2.0 + line_h * lines.len() as f32;
+    let x = (screen_width() - w) * 0.5;
+    let y = (screen_height() - h) * 0.5;
+    draw_rectangle(x, y, w, h, Color::new(0.04, 0.05, 0.07, 0.93));
+    draw_rectangle_lines(x, y, w, h, 2.0, GOLD);
+    for (i, ln) in lines.iter().enumerate() {
+        let (size, color) = if i == 0 { (26.0, GOLD) } else { (20.0, LIGHTGRAY) };
+        draw_text(ln, x + pad, y + pad + line_h * (i as f32 + 1.0) - 6.0, size, color);
     }
 }
 
