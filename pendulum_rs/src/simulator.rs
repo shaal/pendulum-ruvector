@@ -13,6 +13,11 @@
 //! overlap with the RuVector crates' pinned `nalgebra`.
 
 /// A configurable n-link pendulum with torque actuation.
+///
+/// `Clone` is derived so a controller can cheaply *fork* the live arm and roll
+/// it forward under hypothetical torques without disturbing the real state —
+/// the basis of the model-predictive ([`crate::mpc`]) lookahead.
+#[derive(Clone)]
 pub struct Pendulum {
     pub n: usize,
     /// Per-link masses. Read by the GNN feature; kept for completeness otherwise.
